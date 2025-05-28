@@ -1,8 +1,9 @@
 import requests
 import pandas as pd
-from time import sleep
+import time
 import logging
 import inquirer
+import string
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -93,11 +94,52 @@ class NonprofitRevenueScraper:
 
     def process_search_results(self, query):
         """Process all pages for a given search query"""
+        logger.info(f"Processing search query: '{query}'")
+        page = 0
         pass
 
     def scrape_nonprofits_segmented(self):
         """Main scraping function using multiple targeted searches to work around the 10K rate limit"""
         logger.info("Starting segmented {self.state} nonprofit data collection ...")
+
+        common_nonprofit_terms = [
+            "foundation", "association", "society", "institute", "center", "council",
+            "trust", "fund", "alliance", "coalition", "network", "group", "organization",
+            "charity", "church", "temple", "synagogue", "school", "college", "university",
+            "hospital", "health", "medical", "community", "family", "children", "youth", "project",
+            "arts", "museum", "library", "research", "education", "housing", "veterans",
+            "services", "support", "relief", "development", "international", "american"
+        ]
+
+        state_terms = [self.state_name.lower(), self.state_code.lower()]
+
+        # TODO: add major cities .... maybe separate this into a function
+        
+        all_terms = common_nonprofit_terms + state_terms
+
+        for term in all_terms:
+            logger.info(f"Searching for nonprofits with term: '{term}'")
+            self.process_search_results(term)
+            time.sleep(1)
+
+        logger.info("Starting alphabetical search ...")
+        alphabet_searches = list(string.ascii_lowercase) + [
+            "al", "am", "an", "ar", "as", "at", "ca", "ce", "ch", "ci", "co", "cr",
+            "de", "di", "do", "ea", "ed", "el", "em", "en", "ex", "fa", "fi", "fo",
+            "fr", "ge", "gl", "go", "gr", "ha", "he", "hi", "ho", "hu", "in", "is",
+            "ja", "jo", "ka", "ki", "la", "le", "li", "lo", "ma", "me", "mi", "mo",
+            "na", "ne", "no", "of", "op", "or", "pa", "pe", "pr", "qu", "ra", "re",
+            "ri", "ro", "sa", "sc", "se", "sh", "so", "st", "su", "ta", "te", "th",
+            "ti", "to", "tr", "un", "up", "ur", "va", "vi", "wa", "we", "wi", "wo", "yo"
+        ]
+
+        for search_term in alphabet_searches:
+            logger.info(f"Alphabetical search: '{search_term}'")
+            self.process_search_results(search_term)
+            time.sleep(0.5)
+
+        logger.info(f"Collection complete. Found {len(self.results)} unique nonprofits in target revenue range")
+        logger.info(f"Total unique organizations processed: {len(self.processed_eins)}")
 
     def save_to_excel(self, filename=None):
         """Save results to Excel file"""
@@ -139,10 +181,11 @@ def select_state():
         return None, None
 
 def main():
-    scraper = NonprofitRevenueScraper()
-
     try:
         state_code, state_name = select_state()
+
+        if not state_code:
+            return
         
         print(f"\n✅ Selected: {state_name} ({state_code})")
         print(f"🚀 Starting data collection for {state_name} ...")
