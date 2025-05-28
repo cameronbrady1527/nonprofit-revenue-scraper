@@ -1,0 +1,19 @@
+# Virtual environments
+venv/
+env/
+nonprofit_scraper_env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Project-specific files you might want to ignore
+*.xlsx
+*.csv
+logs/
