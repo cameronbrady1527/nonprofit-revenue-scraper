@@ -126,9 +126,9 @@ The script includes built-in protections:
 nonprofit-scraper/
 ├── nonprofit_scraper.py      # Main script
 ├── requirements.txt          # Python dependencies
-├── README.md                # This file
-├── .gitignore               # Git ignore rules
-└── venv/                    # Virtual environment (not in git)
+├── README.md                 # This file
+├── .gitignore                # Git ignore rules
+└── venv/                     # Virtual environment (not in git)
 ```
 
 ## 🔍 Sample Output Summary
