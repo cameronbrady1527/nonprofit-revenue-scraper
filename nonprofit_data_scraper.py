@@ -97,22 +97,50 @@ class NonprofitRevenueScraper:
 
         except requests.RequestException as e:
             logger.error(f"Error fetching page {page} for query '{query}': {e}")
-            return [] # what to return?
-
-        # an EIN may already be in processed_eins... do not send these in payload
-        # check to see if the EIN is already contained within the processed_eins set: if not in there O(n), add it to payload
+            return None # what to return?
 
     def get_organization_details(self, ein):
         """Get financial data for a specific organization"""
-
         # returns the JSON object
-        return {}
+        url = f"{self.base_url}/organizations/{ein}.json"
+
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        
+        except requests.RequestException as e:
+            logger.error(f"Error fetching details for EIN {ein}: {e}")
+            return None
 
     def extract_latest_filing_info(self, org_details):
         """Extract the most recent Form 990 filing information with filing year, revenue, and compensation data"""
-        return 0, 0, 0
 
-    def extract_executive_compensation(self, filing):
+        # search for most recent filing year in org details
+        all_filings = (org_details.get("filings_with_data", []) +
+                       org_details.get("filings_without_data", []))
+        
+        most_recent_year = 0
+        most_recent_filing = None
+        
+        for filing in all_filings:
+            if filing.get("tax_prd_yr", "") > most_recent_year:
+                most_recent_year = filing.get("tax_prd_yr", "")
+                most_recent_filing = filing
+
+        if most_recent_filing in org_details.get("filings_with_data"):
+            revenue = most_recent_filing.get("totrevenue", 0)
+            expenses = most_recent_filing.get("totfuncexpns", 0)
+            comp_percent_of_expenses = most_recent_filing.get("pct_compnsatncurrofcr", 0.0) if most_recent_filing.get("pct_compnsatncurrofcr", 0.0) >= 0 else 0
+            
+            execituve_comp = round(expenses * comp_percent_of_expenses, 2)
+
+        else:
+            revenue, execituve_comp = self.extract_financials_from_pdf(filing)
+        
+        return most_recent_year, revenue, execituve_comp
+
+    def extract_financials_from_pdf(self, filing):
         """Extract executive compensation from various possible fields"""
         pass
 
@@ -133,6 +161,7 @@ class NonprofitRevenueScraper:
 
         for ein in result_eins:
             org_details = self.get_organization_details(ein)
+            # bring in error handling if None is returned
 
             name = org_details["organization"]["name"]
             filing_year, revenue, exec_comp = self.extract_latest_filing_info(org_details)
