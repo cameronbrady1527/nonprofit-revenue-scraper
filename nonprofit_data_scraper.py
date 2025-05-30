@@ -1,3 +1,4 @@
+from typing import List
 import requests
 import pandas as pd
 import time
@@ -76,17 +77,40 @@ class NonprofitRevenueScraper:
         self.results = []
         self.processed_eins = set()
 
-    def get_eins_by_search(self, query, page=0):
+    def get_eins_by_search(self, query, page=0) -> List[int]:
         """Get organization EINs using keyword search to work around total result limits from ProPublica API"""
-        pass
+        url = f"{self.base_url}/search.json?c_code%5Bid%5D=3&q={query}&state%5Bid%5D={self.state_code}&page={page}"
+
+        eins = []
+
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            
+            response_orgs = response.json()["organizations"]
+            for org in response_orgs:
+                ein = org["ein"]
+                if ein not in self.processed_eins:
+                    eins.append(ein)
+
+            return eins
+
+        except requests.RequestException as e:
+            logger.error(f"Error fetching page {page} for query '{query}': {e}")
+            return [] # what to return?
+
+        # an EIN may already be in processed_eins... do not send these in payload
+        # check to see if the EIN is already contained within the processed_eins set: if not in there O(n), add it to payload
 
     def get_organization_details(self, ein):
         """Get financial data for a specific organization"""
-        pass
+
+        # returns the JSON object
+        return {}
 
     def extract_latest_filing_info(self, org_details):
-        """Extract the most recent Form 990 filing information with revenue and compensation data"""
-        pass
+        """Extract the most recent Form 990 filing information with filing year, revenue, and compensation data"""
+        return 0, 0, 0
 
     def extract_executive_compensation(self, filing):
         """Extract executive compensation from various possible fields"""
@@ -96,7 +120,25 @@ class NonprofitRevenueScraper:
         """Process all pages for a given search query"""
         logger.info(f"Processing search query: '{query}'")
         page = 0
-        pass
+        results = None
+        result_eins = []
+
+        while (page == 0 or 'error' not in results):
+            incoming_eins = self.get_eins_by_search(query, page)
+
+            if incoming_eins != []:
+                result_eins.append(incoming_eins)
+
+            page += 1
+
+        for ein in result_eins:
+            org_details = self.get_organization_details(ein)
+
+            name = org_details["organization"]["name"]
+            filing_year, revenue, exec_comp = self.extract_latest_filing_info(org_details)
+
+            self.results.append([name, ein, filing_year, revenue, exec_comp])
+
 
     def scrape_nonprofits_segmented(self):
         """Main scraping function using multiple targeted searches to work around the 10K rate limit"""
