@@ -1,7 +1,9 @@
 ansicon==1.89.0
 blessed==1.21.0
 certifi==2025.4.26
+cffi==1.17.1
 charset-normalizer==3.4.2
+cryptography==45.0.3
 editor==1.6.6
 et_xmlfile==2.0.0
 idna==3.10
@@ -9,7 +11,15 @@ inquirer==3.4.0
 jinxed==1.3.0
 numpy==2.2.6
 openpyxl==3.1.5
+packaging==25.0
 pandas==2.2.3
+pdf2image==1.17.0
+pdfminer.six==20250327
+pdfplumber==0.11.6
+pillow==11.2.1
+pycparser==2.22
+pypdfium2==4.30.1
+pytesseract==0.3.13
 python-dateutil==2.9.0.post0
 pytz==2025.2
 readchar==4.2.1

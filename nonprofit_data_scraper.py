@@ -5,6 +5,9 @@ import time
 import logging
 import inquirer
 import string
+import json
+
+from form_990_parser import Form990Parser
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -97,7 +100,7 @@ class NonprofitRevenueScraper:
 
         except requests.RequestException as e:
             logger.error(f"Error fetching page {page} for query '{query}': {e}")
-            return None # what to return?
+            raise requests.RequestException
 
     def get_organization_details(self, ein):
         """Get financial data for a specific organization"""
@@ -111,12 +114,11 @@ class NonprofitRevenueScraper:
         
         except requests.RequestException as e:
             logger.error(f"Error fetching details for EIN {ein}: {e}")
-            return None
+            raise requests.RequestException
 
     def extract_latest_filing_info(self, org_details):
         """Extract the most recent Form 990 filing information with filing year, revenue, and compensation data"""
 
-        # search for most recent filing year in org details
         all_filings = (org_details.get("filings_with_data", []) +
                        org_details.get("filings_without_data", []))
         
@@ -133,40 +135,80 @@ class NonprofitRevenueScraper:
             expenses = most_recent_filing.get("totfuncexpns", 0)
             comp_percent_of_expenses = most_recent_filing.get("pct_compnsatncurrofcr", 0.0) if most_recent_filing.get("pct_compnsatncurrofcr", 0.0) >= 0 else 0
             
-            execituve_comp = round(expenses * comp_percent_of_expenses, 2)
+            executive_comp = round(expenses * comp_percent_of_expenses, 2)
 
         else:
-            revenue, execituve_comp = self.extract_financials_from_pdf(filing)
+            try:
+                revenue, executive_comp = self.extract_financials_from_pdf(filing)
+            except Exception as e:
+                revenue, executive_comp = "N/A", "N/A"
+
+                logger.error(f"Error parsing data from most recent filing year {most_recent_year} with script `form_990_parser.py`")
+                logger.error("Returning default values (N/A) for revenue and executive compensation")        
         
-        return most_recent_year, revenue, execituve_comp
+        return most_recent_year, revenue, executive_comp
 
     def extract_financials_from_pdf(self, filing):
         """Extract executive compensation from various possible fields"""
-        pass
+        parser = Form990Parser()
+
+        api_response = filing
+
+        result = parser.parse_990_form(api_response, "pdf_download_url")
+
+        print(json.dumps(result, indent=2, default=str))
+
+        if result.get("success"):
+            print(f"\n--- PARSING SUMMARY ---")
+            print(f"Organization: {result.get('organization_name', 'Unknown')}")
+            print(f"Tax Year: {result.get('tax_year', 'Unknown')}")
+            print(f"Form Version: {result.get('form_version', 'Unknown')}")
+            print(f"Confidence Score: {result.get('confidence_score', 0):.2%}")
+            print(f"Used OCR: {result.get('used_ocr', False)}")
+
+            financial_data = result.get('financial_data', {})
+            if financial_data.get('total_revenue'):
+                print(f"Total Revenue: ${financial_data['total_revenue']:,.2f}")
+
+                exec_comp = result.get('executive_compensation', {})
+                if exec_comp:
+                    print("Executive Compensation:")
+                    for title, amount in exec_comp.items():
+                        print(f"  {title}: ${amount:,.2f}")
+                
+                    return round(financial_data['total_revenue'], 2), round(exec_comp, 2) 
+                
+                return round(financial_data['total_revenue'], 2), "N/A"
+            
+        return "N/A", "N/A"
 
     def process_search_results(self, query):
         """Process all pages for a given search query"""
         logger.info(f"Processing search query: '{query}'")
         page = 0
-        results = None
         result_eins = []
 
-        while (page == 0 or 'error' not in results):
-            incoming_eins = self.get_eins_by_search(query, page)
+        while (page == 0 or page <= 400):
+            try:
+                incoming_eins = self.get_eins_by_search(query, page)
 
-            if incoming_eins != []:
-                result_eins.append(incoming_eins)
+                if incoming_eins != []:
+                    result_eins.append(incoming_eins)
+            except requests.RequestException as e:
+                logger.error(f"Error getting the EINs for organizations on page {page}: {e}")
 
             page += 1
 
         for ein in result_eins:
-            org_details = self.get_organization_details(ein)
-            # bring in error handling if None is returned
+            try:
+                org_details = self.get_organization_details(ein)
 
-            name = org_details["organization"]["name"]
-            filing_year, revenue, exec_comp = self.extract_latest_filing_info(org_details)
+                name = org_details["organization"]["name"]
+                filing_year, revenue, exec_comp = self.extract_latest_filing_info(org_details)
 
-            self.results.append([name, ein, filing_year, revenue, exec_comp])
+                self.results.append([name, ein, filing_year, revenue, exec_comp])
+            except requests.RequestException as e:
+                logger.error(f"Error getting the organization details from the API for EIN {ein}")
 
 
     def scrape_nonprofits_segmented(self):
