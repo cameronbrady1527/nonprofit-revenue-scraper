@@ -150,37 +150,22 @@ class NonprofitRevenueScraper:
 
     def extract_financials_from_pdf(self, filing):
         """Extract executive compensation from various possible fields"""
-        parser = Form990Parser()
+        try:
+            parser = Form990Parser()
 
-        api_response = filing
+            revenue, exec_comp = parser.parse_990_form(filing)
 
-        result = parser.parse_990_form(api_response, "pdf_download_url")
+            if revenue != "N/A" and exec_comp != "N/A":
+                logger.debug(f"Successfully extracted: Revenue=${revenue:,.2f}, Executive Compensation=${exec_comp:,.2f}")
+            else:
+                logger.warning(f"Could not extract financial data from PDF for tax year {filing.get('tax_prd_yr', 'Unknown')}")
 
-        print(json.dumps(result, indent=2, default=str))
-
-        if result.get("success"):
-            print(f"\n--- PARSING SUMMARY ---")
-            print(f"Organization: {result.get('organization_name', 'Unknown')}")
-            print(f"Tax Year: {result.get('tax_year', 'Unknown')}")
-            print(f"Form Version: {result.get('form_version', 'Unknown')}")
-            print(f"Confidence Score: {result.get('confidence_score', 0):.2%}")
-            print(f"Used OCR: {result.get('used_ocr', False)}")
-
-            financial_data = result.get('financial_data', {})
-            if financial_data.get('total_revenue'):
-                print(f"Total Revenue: ${financial_data['total_revenue']:,.2f}")
-
-                exec_comp = result.get('executive_compensation', {})
-                if exec_comp:
-                    print("Executive Compensation:")
-                    for title, amount in exec_comp.items():
-                        print(f"  {title}: ${amount:,.2f}")
-                
-                    return round(financial_data['total_revenue'], 2), round(exec_comp, 2) 
-                
-                return round(financial_data['total_revenue'], 2), "N/A"
+            return revenue, exec_comp
+        
+        except Exception as e:
+            logger.error(f"Error parsing data from filing year {filing.get('tax_prd_yr', 'Unknown')}: {e}")
             
-        return "N/A", "N/A"
+            return "N/A", "N/A"
 
     def process_search_results(self, query):
         """Process all pages for a given search query"""

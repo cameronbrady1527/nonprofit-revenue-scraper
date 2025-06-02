@@ -674,13 +674,21 @@ def main():
     # Example API response with PDF URL
     api_response = {
         "organization_name": "Example Nonprofit Organization",
-        "pdf_download_url": "https://example.com/form990.pdf",
+        "pdf_url": "https://example.com/form990.pdf",
         "tax_year": 2023,
         "filing_date": "2024-03-15"
     }
+
+    api_response1 = {
+        "tax_prd": 200912,
+        "tax_prd_yr": 2009,
+        "formtype": 0,
+        "formtype_str": "990",
+        "pdf_url": "https://projects.propublica.org/nonprofits/download-filing?path=2010_08_EO%2F14-2007220_990_200912.pdf"
+    }
     
     # Parse the form
-    result = parser.parse_990_form(api_response, "pdf_download_url")
+    result = parser.parse_990_form(api_response1, "pdf_url")
     
     # Display results
     print(json.dumps(result, indent=2, default=str))
