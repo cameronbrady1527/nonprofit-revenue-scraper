@@ -179,18 +179,76 @@ class Form990Parser:
                 return None
             
             logger.info(f"Downloading PDF from: {pdf_url}")
-            response = requests.get(pdf_url, timeout=30)
-            response.raise_for_status()
             
+            # Strategy 1: Try with browser-like headers
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'application/pdf,application/octet-stream,*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+
+            session = requests.Session()
+            session.headers.update(headers)
+            
+            response = requests.get(pdf_url, timeout=30, allow_redirects=True)
+            # response.raise_for_status()
+            
+            if response.status_code == 403:
+                logger.warning("403 Forbidden on Strategy 1. Trying strategy 2 ...")
+
+                # Strategy 2: Try without special headers
+                simple_headers = {'User-Agent': 'python-requests/2.28.0'}
+                response = session.get(pdf_url, headers=simple_headers, timeout=30, allow_redirects=True)
+
+            if response.status_code == 403:
+                logger.warning("Still receiving 403 - trying Strategy 3 (direct access) ...")
+
+                # Strategy 3: Try with minimal request
+                response = requests.get(pdf_url, timeout=30)
+
+            content_type = response.headers.get('content-type', '').lower()
+            if 'text/html' in content_type and response.status_code == 200:
+                logger.warning("Received HTML instead of PDF - possible redirect or login page")
+
+                if b'pdf' in response.content.lower():
+                    html_text = response.content.decode('utf-8', errors='ignore')
+                    pdf_links = re.findall(r'href=["\']([^"\']*\.pdf[^"\']*)["\']', html_text, re.IGNORECASE)
+
+                    if pdf_links:
+                        new_pdf_url = pdf_links[0]
+                        if not new_pdf_url.startswith('http'):
+                            from urllib.parse import urljoin
+                            new_pdf_url = urljoin(pdf_url, new_pdf_url)
+
+                        logger.info(f"Found PDF link in HTML, trying: {new_pdf_url}")
+                        response = session.get(new_pdf_url, timeout=30, allow_redirects=True)
+
+            response.raise_for_status()
+
+
             # Verify it's actually a PDF
             if not response.content.startswith(b'%PDF'):
-                logger.error("Downloaded content is not a valid PDF")
-                return None
-                
+                if b'%PDF' in response.content[:1000]:
+                    logger.warning("PDF marker found but not at start - proceeding anyway ...")
+                else:
+                    logger.error("Downloaded content is not a valid PDF")
+                    logger.debug(f"Content starts with: {response.content[:100]}")
+                    logger.debug(f"Content type: {response.headers.get('content-type')}")
+                    return None
+
+            logger.info(f"Successfully downloaded PDF ({len(response.content)} bytes)")
             return response.content
             
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error downloading PDF: {str(e)}")
+            return None
+        
         except Exception as e:
-            logger.error(f"Error downloading PDF: {str(e)}")
+            logger.error(f"Unexpected error downloading PDF: {str(e)}")
             return None
 
     def extract_text_from_pdf(self, pdf_bytes: bytes) -> Tuple[str, bool]:
@@ -341,11 +399,18 @@ class Form990Parser:
         
         # Extract each type of financial data
         extraction_results = {}
-        
+
         # Revenue data extraction
-        data.total_revenue = self._extract_single_value(text, patterns.get('total_revenue', []))
-        data.contributions_grants = self._extract_single_value(text, patterns.get('contributions_grants', []))
-        data.program_service_revenue = self._extract_single_value(text, patterns.get('program_service_revenue', []))
+        if form_version == FormVersion.POST_2008:
+            # Try Part I summary first, then Part VIII detailed
+            data.total_revenue = (self._extract_single_value(text, patterns.get('total_revenue_part1', [])) or
+                                  self._extract_single_value(text, patterns.get('total_revenue_part8', [])))
+            
+        else:
+            data.total_revenue = self._extract_single_value(text, patterns.get('total_revenue', []))
+        
+        data.contributions_grants = self._extract_single_value(text, patterns.get('contributions_grants', []) or patterns.get('contributions', []))
+        data.program_service_revenue = self._extract_single_value(text, patterns.get('program_service_revenue', []) or patterns.get('program_revenue', []))
         data.investment_income = self._extract_single_value(text, patterns.get('investment_income', []))
         data.total_expenses = self._extract_single_value(text, patterns.get('total_expenses', []))
         

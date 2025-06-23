@@ -17,3 +17,6 @@ pip-delete-this-directory.txt
 *.xlsx
 *.csv
 logs/
+
+# Models in progress
+models/
