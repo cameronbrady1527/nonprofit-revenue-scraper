@@ -258,7 +258,7 @@ class NonprofitRevenueScraper:
             filename = f"{self.state_code.lower()}_nonprofits_250k_1m_{timestamp}.xlsx"
         
         # Create DataFrame
-        df = pd.DataFrame(self.results)
+        df = pd.DataFrame(self.results, columns=['Organization Name', 'EIN', 'Filing Year', 'Revenue', 'Executive Compensation'])
         
         # Save to Excel with formatting
         with pd.ExcelWriter(filename, engine='openpyxl') as writer:
