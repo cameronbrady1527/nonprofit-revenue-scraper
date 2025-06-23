@@ -91,7 +91,7 @@ class NonprofitRevenueScraper:
         eins = []
 
         try:
-            response = self.session.get(search_url, params=params, timeout=10)
+            response = self.session.get(search_url, params=params, timeout=30)
             response.raise_for_status()
             
             response_orgs = response.json()["organizations"]
@@ -105,6 +105,28 @@ class NonprofitRevenueScraper:
         except requests.RequestException as e:
             logger.error(f"Error fetching page {page} for query '{query}': {e}")
             raise requests.RequestException
+
+    def get_page_total(self, query) -> int:
+        search_url = f"{self.base_url}/search.json"
+        params = {
+            "q": query,
+            "state[id]": self.state_code,
+            "c_code[id]": "3"
+        }
+
+        try:
+            response = self.session.get(search_url, params=params, timeout=30)
+            response.raise_for_status()
+
+            total_pages = response.json()["num_pages"]
+
+        except Exception as e:
+            logger.error(f"Error getting page number: {e}")
+            
+            total_pages = 0
+
+        return total_pages
+
 
     def get_organization_details(self, ein):
         """Get financial data for a specific organization"""
@@ -134,7 +156,7 @@ class NonprofitRevenueScraper:
                 most_recent_filing = filing
 
         if not filings_with_data:
-            return "N/A", "N/A", "N/A"
+            return "N/A", 0, 0
 
         revenue = most_recent_filing.get("totrevenue", 0)
         expenses = most_recent_filing.get("totfuncexpns", 0)
@@ -150,18 +172,23 @@ class NonprofitRevenueScraper:
         page = 0
         result_eins = []
 
-        while (page <= 400):
+        num_pages = self.get_page_total(query)
+
+        while (page <= num_pages):
             try:
                 incoming_eins = self.get_eins_by_search(query, page)
 
                 if incoming_eins != []:
                     result_eins += incoming_eins
+            
             except requests.RequestException as e:
                 logger.error(f"Error getting the EINs for organizations on page {page}: {e}")
                 break
 
             page += 1
 
+        # print(result_eins)
+        
         for ein in result_eins:
             try:
                 org_details = self.get_organization_details(ein)
@@ -169,14 +196,17 @@ class NonprofitRevenueScraper:
                 name = org_details["organization"]["name"]
                 filing_year, revenue, exec_comp = self.extract_latest_filing_info(org_details)
 
-                self.results.append([name, ein, filing_year, revenue, exec_comp])
+                if int(revenue) >= 250000 and int(revenue) <= 1000000:
+                    self.results.append([name, ein, filing_year, revenue, exec_comp])
             except requests.RequestException as e:
                 logger.error(f"Error getting the organization details from the API for EIN {ein}")
+
+            time.sleep(0.1)
 
 
     def scrape_nonprofits_segmented(self):
         """Main scraping function using multiple targeted searches to work around the 10K rate limit"""
-        logger.info(f"Starting segmented {self.state} nonprofit data collection ...")
+        logger.info(f"Starting segmented {self.state_name} nonprofit data collection ...")
 
         common_nonprofit_terms = [
             "foundation", "association", "society", "institute", "center", "council", "community",
@@ -196,7 +226,6 @@ class NonprofitRevenueScraper:
         for term in all_terms:
             logger.info(f"Searching for nonprofits with term: '{term}'")
             self.process_search_results(term)
-            time.sleep(1)
 
         logger.info("Starting alphabetical search ...")
         alphabet_searches = list(string.ascii_lowercase) + [
@@ -258,11 +287,11 @@ class NonprofitRevenueScraper:
             worksheet[f'A{summary_row+1}'] = f'Total Organizations: {len(df)}'
             
             # Calculate summary stats for organizations with valid compensation data
-            valid_comp = df[df['Compensation (Raw)'] != 'N/A']['Compensation (Raw)']
-            if len(valid_comp) > 0:
-                worksheet[f'A{summary_row+2}'] = f'Organizations with Compensation Data: {len(valid_comp)}'
-                worksheet[f'A{summary_row+3}'] = f'Average Executive Compensation: ${valid_comp.mean():,.0f}'
-                worksheet[f'A{summary_row+4}'] = f'Median Executive Compensation: ${valid_comp.median():,.0f}'
+            # valid_comp = df[df['Compensation (Raw)'] != 'N/A']['Compensation (Raw)']
+            # if len(valid_comp) > 0:
+            #     worksheet[f'A{summary_row+2}'] = f'Organizations with Compensation Data: {len(valid_comp)}'
+            #     worksheet[f'A{summary_row+3}'] = f'Average Executive Compensation: ${valid_comp.mean():,.0f}'
+            #     worksheet[f'A{summary_row+4}'] = f'Median Executive Compensation: ${valid_comp.median():,.0f}'
         
         logger.info(f"Results saved to {filename}")
         print(f"\n📊 Results saved to: {filename}")
