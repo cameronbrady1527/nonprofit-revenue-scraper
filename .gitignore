@@ -23,3 +23,6 @@ models/
 
 # Environment variables
 .env
+
+# Ignore Claude
+CLAUDE.md
