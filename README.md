@@ -1,39 +1,91 @@
-# 🏛️ Nonprofit Data Analysis Platform
+# Nonprofit Data Analysis Platform
 
 A comprehensive Python toolkit for collecting and analyzing nonprofit financial data from ProPublica's Nonprofit Explorer API. Features AI-powered PDF parsing, real-time GUI monitoring, and high-performance async processing to identify organizations with revenue between $250K - $1M.
 
-## ✨ Key Features
+## Table of Contents
 
-### 🚀 **Dual Processing Architecture**
+- [Key Features](#key-features)
+  - [Dual Processing Architecture](#dual-processing-architecture)
+  - [AI-Powered PDF Parsing](#ai-powered-pdf-parsing)
+  - [Real-Time GUI Monitoring](#real-time-gui-monitoring)
+  - [Advanced Search Strategy](#advanced-search-strategy)
+  - [Professional Data Export](#professional-data-export)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Recommended Usage - GUI Monitoring](#recommended-usage---gui-monitoring)
+  - [Alternative Usage Options](#alternative-usage-options)
+  - [GUI Monitor Preview](#gui-monitor-preview)
+- [Enhanced Output](#enhanced-output)
+  - [Excel Files with Professional Formatting](#excel-files-with-professional-formatting)
+  - [File Naming & Features](#file-naming--features)
+  - [Live Summary Statistics](#live-summary-statistics)
+- [How It Works](#how-it-works)
+  - [Dual Architecture Processing](#dual-architecture-processing)
+  - [AI-Powered Data Extraction](#ai-powered-data-extraction)
+  - [Advanced Search Strategy](#advanced-search-strategy-1)
+  - [Data Processing Pipeline](#data-processing-pipeline)
+- [Performance Metrics](#performance-metrics)
+  - [Async Scraper (Recommended)](#async-scraper-recommended)
+  - [Sync Scraper (Stable)](#sync-scraper-stable)
+  - [Expected Results by State Size](#expected-results-by-state-size)
+- [Advanced Rate Limiting & Error Handling](#advanced-rate-limiting--error-handling)
+  - [Smart Rate Limit Management](#smart-rate-limit-management)
+  - [Intelligent Error Recovery](#intelligent-error-recovery)
+  - [Data Quality Assurance](#data-quality-assurance)
+- [Enhanced Project Structure](#enhanced-project-structure)
+- [Enhanced Sample Output](#enhanced-sample-output)
+  - [Real-Time Processing Log](#real-time-processing-log)
+  - [Enhanced Final Summary](#enhanced-final-summary)
+- [Advanced Troubleshooting](#advanced-troubleshooting)
+  - [Setup Issues](#setup-issues)
+  - [Runtime Issues](#runtime-issues)
+  - [Data Quality Issues](#data-quality-issues)
+- [Contributing](#contributing)
+  - [High-Impact Improvements](#high-impact-improvements)
+  - [Technical Improvements](#technical-improvements)
+  - [Development Setup](#development-setup)
+- [Enhanced Data Sources](#enhanced-data-sources)
+- [Legal & Ethical Use](#legal--ethical-use)
+- [Roadmap & Future Enhancements](#roadmap--future-enhancements)
+  - [Recently Completed](#recently-completed)
+  - [Coming Soon](#coming-soon)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
+- [Support](#support)
+
+## Key Features
+
+### **Dual Processing Architecture**
 - **Async Scraper**: 5-10x faster with concurrent processing (10 API + 3 PDF simultaneous)
 - **Sync Scraper**: Stable original version for conservative processing
 - **Smart Deduplication**: Real-time EIN tracking prevents duplicate processing
 
-### 🤖 **AI-Powered PDF Parsing**
+### **AI-Powered PDF Parsing**
 - **Gemini 2.5 Flash**: Primary AI-based Form 990 analysis with structured JSON output
 - **OCR Fallback**: Legacy `pdfplumber` + `pytesseract` for when AI fails
 - **Intelligent Error Recovery**: Automatic fallback between parsing methods
 - **Rate Limit Detection**: Distinguishes API limits from legitimate no-data cases
 
-### 🖥️ **Real-Time GUI Monitoring**
+### **Real-Time GUI Monitoring**
 - **Three-Panel Dashboard**: Progress tracking, detailed statistics, and live logs
 - **Color-Coded Error Tracking**: API ✅, AI ✅, Rate Limits ⚠️, Errors ❌, N/A ℹ️
 - **Live Performance Metrics**: Success rates, processing speed, data source breakdown
 - **Responsive Updates**: Real-time progress and error visibility
 
-### 🔍 **Advanced Search Strategy**
+### **Advanced Search Strategy**
 - **138 Total Search Queries**: Comprehensive coverage beyond API limits
 - **41 Nonprofit Terms**: foundation, association, charity, hospital, etc.
 - **95 Alphabetical Searches**: Strategic letter combinations for maximum coverage
 - **State-Specific Terms**: Includes state names and major cities
 
-### 📊 **Professional Data Export**
+### **Professional Data Export**
 - **Rich Excel Output**: Auto-formatted columns, revenue sorting, summary statistics
 - **Data Source Tracking**: Clear indicators of API vs AI vs N/A data sources
 - **Comprehensive Columns**: Name, EIN, Filing Year, Revenue, Compensation + analytics
 - **Summary Insights**: Revenue/compensation ranges and data quality metrics
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -71,7 +123,7 @@ A comprehensive Python toolkit for collecting and analyzing nonprofit financial 
    echo "GOOGLE_AI_API_KEY=your_api_key_here" > .env
    ```
 
-### 🎯 **Recommended Usage** - GUI Monitoring
+### **Recommended Usage** - GUI Monitoring
 
 Launch with real-time monitoring dashboard:
 
@@ -100,27 +152,27 @@ python async_nonprofit_scraper.py
 python scraper_monitor.py
 ```
 
-### 📺 **GUI Monitor Preview**
+### **GUI Monitor Preview**
 
 ```
 ┌─ Progress & Summary ────────┬─ Detailed Statistics ──────┐
-│ ████████████████░░░ 85.2%   │ ✅ Data Sources:            │
-│ 1,247 / 1,463 orgs         │   🔢 API: 892               │
-│ State: California (CA)      │   🤖 AI: 283                │
-│ Method: GEMINI              │ ⚠️ Issues:                  │
-│ Current: Processing orgs    │   🚫 Rate Limits: 12        │
-│ Elapsed: 02:34:17          │   ❌ Errors: 8              │
-│ Avg: 2.3s per org         │   ℹ️ N/A: 72                │
-└─────────────────────────────┴─────────────────────────────┘
-│ 📜 Live Logs                                              │
-│ [14:23:45] INFO: Processing batch 63/74 (20 orgs)        │
-│ [14:23:47] SUCCESS: Found revenue data via API           │
-│ [14:23:48] WARNING: Gemini rate limit hit - retrying     │
-│ [14:23:51] INFO: OCR fallback successful                 │
-└───────────────────────────────────────────────────────────┘
+│ ████████████████░░░ 85.2%   │ ✅ Data Sources:          
+│ 1,247 / 1,463 orgs          │   🔢 API: 892             
+│ State: California (CA)      │   🤖 AI: 283              
+│ Method: GEMINI              │ ⚠️ Issues:                
+│ Current: Processing orgs    │   🚫 Rate Limits: 12      
+│ Elapsed: 02:34:17           │   ❌ Errors: 8            
+│ Avg: 2.3s per org           │   ℹ️ N/A: 72              
+└─────────────────────────────┴────────────────────────────┘
+│ 📜 Live Logs                                            
+│ [14:23:45] INFO: Processing batch 63/74 (20 orgs)        
+│ [14:23:47] SUCCESS: Found revenue data via API           
+│ [14:23:48] WARNING: Gemini rate limit hit - retrying     
+│ [14:23:51] INFO: OCR fallback successful                 
+└──────────────────────────────────────────────────────────┘
 ```
 
-## 📋 Enhanced Output
+## Enhanced Output
 
 ### Excel Files with Professional Formatting
 
@@ -149,9 +201,9 @@ python scraper_monitor.py
 🎯 Final stats: API: 892 | AI: 283 | N/A: 72 | Rate Limits: 0 | Errors: 0
 ```
 
-## 🔧 How It Works
+## How It Works
 
-### 🚀 **Dual Architecture Processing**
+### **Dual Architecture Processing**
 
 #### Async Scraper (Recommended)
 - **Concurrent Processing**: 10 simultaneous API calls + 3 PDF parsing processes
@@ -164,7 +216,7 @@ python scraper_monitor.py
 - **Proven Reliability**: Original stable version with comprehensive logging
 - **Conservative Approach**: 0.3-1 second delays between requests
 
-### 🤖 **AI-Powered Data Extraction**
+### **AI-Powered Data Extraction**
 
 #### Intelligent PDF Parsing Pipeline
 1. **ProPublica API First**: Check if revenue/compensation already available
@@ -179,7 +231,7 @@ python scraper_monitor.py
 - **Retry Logic**: Exponential backoff for temporary failures
 - **Graceful Degradation**: Continues processing even when some methods fail
 
-### 🔍 **Advanced Search Strategy**
+### **Advanced Search Strategy**
 Comprehensive approach to overcome ProPublica's 10,000 result API limit:
 
 1. **41 Nonprofit Keywords**: foundation, association, charity, hospital, church, etc.
@@ -188,56 +240,56 @@ Comprehensive approach to overcome ProPublica's 10,000 result API limit:
 4. **Real-time Deduplication**: EIN tracking prevents processing duplicates
 5. **Total Coverage**: ~138 unique search queries per state = maximum org discovery
 
-### 🎯 **Data Processing Pipeline**
+### **Data Processing Pipeline**
 1. **EIN Collection**: Gather all unique organization IDs across search strategies
 2. **Batch Processing**: Process organizations in groups of 20 for optimal performance
 3. **Smart Filtering**: Revenue range $250K-$1M with multiple data source attempts
 4. **Quality Tracking**: Monitor success rates and error categories in real-time
 5. **Professional Export**: Generate formatted Excel with analysis-ready columns
 
-## ⚡ Performance Metrics
+## Performance Metrics
 
-### 🚀 **Async Scraper (Recommended)**
+### **Async Scraper (Recommended)**
 - **Runtime**: 30 minutes - 2 hours (5-10x faster than sync)
 - **Throughput**: 10 concurrent API calls + 3 concurrent PDF processes
 - **Large States**: California, Texas, New York - 1-2 hours
 - **Small States**: Wyoming, Vermont, Delaware - 15-30 minutes
 - **Memory Usage**: Efficient async processing with semaphore controls
 
-### 📝 **Sync Scraper (Stable)**
+### **Sync Scraper (Stable)**
 - **Runtime**: 2-8 hours depending on state size
 - **Throughput**: Sequential processing with 0.3-1 second delays
 - **Memory Usage**: Minimal - processes data incrementally
 - **Best For**: Conservative processing, debugging, smaller datasets
 
-### 📊 **Expected Results by State Size**
+### **Expected Results by State Size**
 - **Large States** (CA, TX, NY, FL): 800-2,000 qualifying nonprofits
 - **Medium States** (OH, PA, IL, MI): 400-800 qualifying nonprofits  
 - **Small States** (WY, VT, DE, ND): 50-200 qualifying nonprofits
 - **Success Rate**: 70-85% data retrieval (API + AI combined)
 - **AI Enhancement**: +15-25% more data vs OCR-only approach
 
-## 🛡️ Advanced Rate Limiting & Error Handling
+## Advanced Rate Limiting & Error Handling
 
-### 🤖 **Smart Rate Limit Management**
+### **Smart Rate Limit Management**
 - **Gemini API**: Automatic rate limit detection with exponential backoff retry
 - **ProPublica API**: Respectful delays (0.3-1s sync, semaphore-controlled async)
 - **PDF Downloads**: Session warming and header rotation to prevent 403 errors
 - **Error Categorization**: Distinguishes rate limits from legitimate no-data cases
 
-### 🔄 **Intelligent Error Recovery**
+### **Intelligent Error Recovery**
 - **Automatic Fallback**: Gemini AI → OCR → Mark as N/A (graceful degradation)
 - **Retry Logic**: Exponential backoff for temporary network/API issues  
 - **Partial Save**: Graceful interruption with Ctrl+C saves all collected data
 - **Real-time Monitoring**: GUI shows exactly where/why errors occur
 
-### 📊 **Data Quality Assurance**
+### **Data Quality Assurance**
 - **Duplicate Prevention**: Real-time EIN tracking across all search strategies
 - **Revenue Validation**: Filters organizations within $250K-$1M range
 - **Data Source Tracking**: Clear indicators of API vs AI vs N/A sources
 - **Success Rate Monitoring**: Live tracking of data retrieval effectiveness
 
-## 📁 Enhanced Project Structure
+## Enhanced Project Structure
 
 ```
 nonprofit-data-platform/
@@ -263,9 +315,9 @@ nonprofit-data-platform/
     └── output/                    # Generated Excel files
 ```
 
-## 🔍 Enhanced Sample Output
+## Enhanced Sample Output
 
-### 📊 **Real-Time Processing Log**
+### **Real-Time Processing Log**
 ```
 🔥 Starting ASYNC scraper...
 State: California (CA)
@@ -280,7 +332,7 @@ Search Queries: ~138 total (41 nonprofit terms + 2 state terms + 95 alphabetical
 🚀 Progress: 1,247/15,642 (8.0%) | API: 892 | AI: 283 | N/A: 72 | Rate Limits: 0 | Errors: 0
 ```
 
-### 📈 **Enhanced Final Summary**
+### **Enhanced Final Summary**
 ```
 === CALIFORNIA ASYNC SCRAPER RESULTS ===
 ⏱️  Total processing time: 94.2 minutes
@@ -299,9 +351,9 @@ Search Queries: ~138 total (41 nonprofit terms + 2 state terms + 95 alphabetical
   ⚠️ Issues: 0.5% (20 orgs) - Rate limits + errors (fixable)
 ```
 
-## 🐛 Advanced Troubleshooting
+## Advanced Troubleshooting
 
-### 🔧 **Setup Issues**
+### **Setup Issues**
 
 **Missing Dependencies**
 ```bash
@@ -326,7 +378,7 @@ echo %GOOGLE_AI_API_KEY%  # Windows
 echo "GOOGLE_AI_API_KEY=your_key_here" > .env
 ```
 
-### ⚠️ **Runtime Issues**
+### **Runtime Issues**
 
 **High Rate Limits in GUI**
 - Reduce concurrency: Edit `max_concurrent_api=5` and `max_concurrent_pdf=2`
@@ -343,7 +395,7 @@ echo "GOOGLE_AI_API_KEY=your_key_here" > .env
 - **High N/A**: Normal for smaller states or specialized nonprofit types
 - **High Errors**: Check internet connection, try sync scraper
 
-### 📊 **Data Quality Issues**
+### **Data Quality Issues**
 
 **Unexpected Results**
 - **Low Revenue Orgs**: Some may have unreported revenue (marked as N/A)
@@ -355,25 +407,25 @@ echo "GOOGLE_AI_API_KEY=your_key_here" > .env
 - **Memory Usage**: Async scraper is more memory efficient
 - **Network Timeouts**: Built-in retry logic handles temporary issues
 
-## 🤝 Contributing
+## Contributing
 
 Contributions welcome! Priority areas for enhancement:
 
-### 🎯 **High-Impact Improvements**
+### **High-Impact Improvements**
 - **Enhanced AI Parsing**: Improve Gemini prompts for better financial data extraction
 - **Additional Search Terms**: Discover new nonprofit keywords for better coverage
 - **Performance Optimization**: Further async improvements and caching strategies
 - **Data Validation**: Enhanced verification of extracted financial data
 - **Visualization Tools**: Charts and graphs for analysis of collected data
 
-### 🔧 **Technical Improvements**
+### **Technical Improvements**
 - **Database Integration**: PostgreSQL/SQLite storage options
 - **Multi-Year Analysis**: Historical trend tracking across filing years
 - **Geographic Analysis**: Mapping and regional comparison tools
 - **Export Formats**: JSON, CSV, database exports
 - **Web Interface**: Browser-based GUI for easier use
 
-### 🚀 **Development Setup**
+### **Development Setup**
 1. Fork the repository
 2. Create feature branch: `git checkout -b feature-name`
 3. Set up development environment with all dependencies
@@ -381,7 +433,7 @@ Contributions welcome! Priority areas for enhancement:
 5. Verify GUI monitoring works correctly
 6. Submit pull request with comprehensive description
 
-## 📊 Enhanced Data Sources
+## Enhanced Data Sources
 
 - **ProPublica Nonprofit Explorer API**: Primary organization and filing data
 - **IRS Form 990 Data**: Tax filings from 2012-present (1.8+ million filings)
@@ -389,7 +441,7 @@ Contributions welcome! Priority areas for enhancement:
 - **Real-time Error Tracking**: Comprehensive categorization of data quality issues
 - **Multi-Source Validation**: API data verified against PDF analysis when available
 
-## ⚖️ Legal & Ethical Use
+## Legal & Ethical Use
 
 - **Public Data**: All data sourced from public IRS filings via ProPublica's API
 - **API Compliance**: Respectful rate limiting and terms of service adherence  
@@ -397,16 +449,16 @@ Contributions welcome! Priority areas for enhancement:
 - **Privacy Conscious**: No collection of donor information or private data
 - **Intended Use**: Research, journalism, grant-making, and nonprofit sector analysis
 
-## 🚀 Roadmap & Future Enhancements
+## Roadmap & Future Enhancements
 
-### ✅ **Recently Completed**
+### **Recently Completed**
 - [x] AI-powered PDF parsing with Gemini 2.5 Flash
 - [x] Real-time GUI monitoring dashboard
 - [x] High-performance async architecture
 - [x] Advanced error categorization and rate limit detection
 - [x] Comprehensive search strategy (138 queries per state)
 
-### 🎯 **Coming Soon**
+### **Coming Soon**
 - [ ] **Multi-Year Trend Analysis**: Track financial changes over time
 - [ ] **Advanced Data Visualization**: Interactive charts and geographic mapping
 - [ ] **Board Member Data**: Extract key personnel information from filings
@@ -416,17 +468,17 @@ Contributions welcome! Priority areas for enhancement:
 - [ ] **Web Interface**: Browser-based tool for non-technical users
 - [ ] **API Service**: RESTful API for integration with other tools
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **ProPublica** for providing the Nonprofit Explorer API
 - **IRS** for making nonprofit tax data publicly available
 - **Python community** for the excellent libraries used in this project
 
-## 📞 Support
+## Support
 
 If you encounter issues or have questions:
 
