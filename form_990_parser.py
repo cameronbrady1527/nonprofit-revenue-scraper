@@ -5,6 +5,7 @@ from pdf2image import convert_from_bytes
 import re
 from io import BytesIO
 import json
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 from enum import Enum
@@ -180,21 +181,39 @@ class Form990Parser:
             
             logger.info(f"Downloading PDF from: {pdf_url}")
             
-            # Strategy 1: Try with browser-like headers
+            # Strategy 1: Try with advanced browser-like headers and session warming
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'application/pdf,application/octet-stream,*/*',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'DNT': '1',
                 'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
+                'Referer': 'https://projects.propublica.org/nonprofits/',
+                'Cache-Control': 'max-age=0'
             }
 
             session = requests.Session()
             session.headers.update(headers)
             
-            response = requests.get(pdf_url, timeout=30, allow_redirects=True)
+            # Session warming - visit the main site first to look like a real user
+            try:
+                logger.debug("Warming session by visiting main site...")
+                warm_response = session.get('https://projects.propublica.org/nonprofits/', timeout=10)
+                if warm_response.status_code == 200:
+                    logger.debug("Session warmed successfully")
+                time.sleep(1)  # Brief pause between requests
+            except Exception as e:
+                logger.debug(f"Session warming failed (continuing anyway): {e}")
+            
+            response = session.get(pdf_url, timeout=30, allow_redirects=True)
             # response.raise_for_status()
             
             if response.status_code == 403:
@@ -205,10 +224,38 @@ class Form990Parser:
                 response = session.get(pdf_url, headers=simple_headers, timeout=30, allow_redirects=True)
 
             if response.status_code == 403:
-                logger.warning("Still receiving 403 - trying Strategy 3 (direct access) ...")
+                logger.warning("Still receiving 403 - trying Strategy 3 (different session) ...")
 
-                # Strategy 3: Try with minimal request
-                response = requests.get(pdf_url, timeout=30)
+                # Strategy 3: Try with a completely new session and different approach
+                new_session = requests.Session()
+                
+                # Use different user agent and headers
+                alt_headers = {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+                    'Accept': '*/*',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Accept-Encoding': 'identity',  # Don't use compression
+                    'Connection': 'keep-alive',
+                    'Pragma': 'no-cache',
+                    'Cache-Control': 'no-cache'
+                }
+                new_session.headers.update(alt_headers)
+                
+                # Try to get a different entry point first
+                try:
+                    # Extract organization ID from URL to visit their page first
+                    import re
+                    match = re.search(r'(\d{2}-\d{7})', pdf_url)
+                    if match:
+                        ein = match.group(1).replace('-', '')
+                        org_url = f'https://projects.propublica.org/nonprofits/organizations/{ein}'
+                        logger.debug(f"Visiting organization page first: {org_url}")
+                        new_session.get(org_url, timeout=10)
+                        time.sleep(2)
+                except Exception as e:
+                    logger.debug(f"Could not visit org page: {e}")
+                
+                response = new_session.get(pdf_url, timeout=30)
 
             content_type = response.headers.get('content-type', '').lower()
             if 'text/html' in content_type and response.status_code == 200:
