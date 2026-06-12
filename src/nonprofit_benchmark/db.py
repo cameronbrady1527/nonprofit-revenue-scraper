@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from nonprofit_benchmark.bmf import BmfOrg
 from nonprofit_benchmark.filing_selector import SOURCE_API, SelectedFiling
-from nonprofit_benchmark.models import Base, Filing, Organization
+from nonprofit_benchmark.gemini_parser import FilingExtraction
+from nonprofit_benchmark.models import Base, Executive, Filing, Organization
 
 PARSE_STATUS_UNPARSED = "unparsed"
 PARSE_STATUS_PARSED = "parsed"
@@ -98,3 +99,51 @@ def record_selected_filing(engine: Engine, ein: str, selected: SelectedFiling) -
 def list_filings(engine: Engine) -> list[Filing]:
     with Session(engine) as session:
         return list(session.scalars(select(Filing)))
+
+
+def filings_to_parse(engine: Engine, state: str | None = None) -> list[Filing]:
+    """Filings whose data must come from a PDF that hasn't been parsed yet."""
+    query = select(Filing).where(Filing.parse_status == PARSE_STATUS_UNPARSED)
+    if state:
+        query = query.join(Organization, Organization.ein == Filing.ein).where(
+            Organization.state == state.upper()
+        )
+    with Session(engine) as session:
+        return list(session.scalars(query))
+
+
+def record_parse_success(engine: Engine, filing_id: int, extraction: FilingExtraction) -> None:
+    """Store extracted executives (replacing any prior parse) and mark parsed."""
+    with Session(engine) as session:
+        filing = session.get(Filing, filing_id)
+        for stale in session.scalars(select(Executive).where(Executive.filing_id == filing_id)):
+            session.delete(stale)
+        for executive in extraction.executives:
+            session.add(
+                Executive(
+                    filing_id=filing_id,
+                    name=executive.name,
+                    title=executive.title,
+                    compensation_org=executive.compensation_org,
+                    compensation_related=executive.compensation_related,
+                    compensation_other=executive.compensation_other,
+                )
+            )
+        if extraction.total_revenue is not None:
+            filing.total_revenue = extraction.total_revenue
+        filing.parse_status = PARSE_STATUS_PARSED
+        session.commit()
+
+
+def record_parse_failure(engine: Engine, filing_id: int) -> None:
+    with Session(engine) as session:
+        session.get(Filing, filing_id).parse_status = PARSE_STATUS_FAILED
+        session.commit()
+
+
+def list_executives(engine: Engine, filing_id: int | None = None) -> list[Executive]:
+    query = select(Executive)
+    if filing_id is not None:
+        query = query.where(Executive.filing_id == filing_id)
+    with Session(engine) as session:
+        return list(session.scalars(query))

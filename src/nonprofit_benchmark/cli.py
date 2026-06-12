@@ -4,13 +4,18 @@ import argparse
 
 from nonprofit_benchmark.bmf import download_bmf, parse_bmf
 from nonprofit_benchmark.db import (
+    filings_to_parse,
     get_engine,
     init_db,
     list_organizations,
+    record_parse_failure,
+    record_parse_success,
     record_selected_filing,
     upsert_organizations,
 )
 from nonprofit_benchmark.filing_selector import select_filing
+from nonprofit_benchmark.gemini_parser import GeminiParseError, GeminiParser
+from nonprofit_benchmark.pdfs import PdfDownloadError, download_pdf
 from nonprofit_benchmark.propublica import ProPublicaClient, ProPublicaError
 
 DEFAULT_DB = "benchmark.db"
@@ -42,7 +47,42 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_cmd.add_argument("--db", default=DEFAULT_DB, help="Path to the SQLite database file")
     fetch_cmd.add_argument("--limit", type=int, help="Only fetch the first N organizations")
 
+    parse_cmd = subcommands.add_parser(
+        "parse", help="Gemini-parse unparsed PDF-only filings for a state"
+    )
+    parse_cmd.add_argument("--state", required=True, help="Two-letter state code")
+    parse_cmd.add_argument("--db", default=DEFAULT_DB, help="Path to the SQLite database file")
+    parse_cmd.add_argument("--limit", type=int, help="Only parse the first N filings")
+
     return parser
+
+
+def run_parse(args: argparse.Namespace) -> int:
+    engine = get_engine(args.db)
+    filings = filings_to_parse(engine, state=args.state)
+    if args.limit:
+        filings = filings[: args.limit]
+    parser = GeminiParser()
+
+    parsed = failed = 0
+    for i, filing in enumerate(filings, start=1):
+        try:
+            extraction = parser.parse(download_pdf(filing.pdf_url))
+        except (PdfDownloadError, GeminiParseError) as exc:
+            print(f"  ! {filing.ein} ({filing.tax_year}): {exc}")
+            record_parse_failure(engine, filing.id)
+            failed += 1
+            continue
+        record_parse_success(engine, filing.id, extraction)
+        parsed += 1
+        if i % 25 == 0:
+            print(f"  ...{i}/{len(filings)} filings")
+
+    print(
+        f"Parsed {parsed} of {len(filings)} filings for {args.state.upper()} "
+        f"({failed} failed)"
+    )
+    return 0
 
 
 def run_fetch(args: argparse.Namespace) -> int:
@@ -107,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_seed(args)
     elif args.command == "fetch":
         return run_fetch(args)
+    elif args.command == "parse":
+        return run_parse(args)
 
     return 0
 
