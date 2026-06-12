@@ -6,6 +6,7 @@ unchanged to PostgreSQL/Supabase.
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
@@ -174,6 +175,47 @@ def query_peers(
             )
             peers.append(Peer(organization=organization, filing=filing, executives=executives))
     return peers
+
+
+class OrgLookup(NamedTuple):
+    """One organization with its newest stored filing (None if no filing yet)."""
+
+    organization: Organization
+    filing: Filing | None
+    executives: list[Executive]
+
+
+def find_org_by_ein(engine: Engine, ein: str) -> OrgLookup | None:
+    """The organization with this exact EIN, its newest stored filing, and
+    that filing's executives; None when the EIN is not in the database."""
+    with Session(engine) as session:
+        organization = session.get(Organization, ein)
+        if organization is None:
+            return None
+        filing = session.scalars(
+            select(Filing)
+            .where(Filing.ein == ein)
+            .order_by(Filing.tax_year.desc())
+            .limit(1)
+        ).first()
+        executives = (
+            list(session.scalars(select(Executive).where(Executive.filing_id == filing.id)))
+            if filing
+            else []
+        )
+        return OrgLookup(organization=organization, filing=filing, executives=executives)
+
+
+def search_organizations(
+    engine: Engine, name: str, state: str | None = None
+) -> list[Organization]:
+    """Candidate organizations whose name contains the query (case-insensitive),
+    for pick-from-results when an EIN lookup misses."""
+    query = select(Organization).where(Organization.name.icontains(name))
+    if state:
+        query = query.where(Organization.state == state.upper())
+    with Session(engine) as session:
+        return list(session.scalars(query))
 
 
 def list_executives(engine: Engine, filing_id: int | None = None) -> list[Executive]:

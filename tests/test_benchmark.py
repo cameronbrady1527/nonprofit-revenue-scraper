@@ -1,6 +1,12 @@
 """Benchmark Engine: peer table rows + summary statistics (pure, no I/O)."""
 
-from nonprofit_benchmark.benchmark import Peer, build_rows, summarize
+from nonprofit_benchmark.benchmark import (
+    Peer,
+    build_rows,
+    ordinal,
+    percentile_rank,
+    summarize,
+)
 from nonprofit_benchmark.models import Executive, Filing, Organization
 
 
@@ -143,6 +149,59 @@ def test_summary_of_single_peer_collapses_to_its_figure():
     assert stats.peer_count == 1
     assert (stats.median, stats.p25, stats.p75) == (95000, 95000, 95000)
     assert (stats.minimum, stats.maximum) == (95000, 95000)
+
+
+def test_percentile_of_empty_peer_set_is_none():
+    assert percentile_rank(95000, []) is None
+
+
+def test_percentile_below_all_peers_is_zero():
+    rows = rows_with_compensation(80000, 95000, 120000)
+
+    assert percentile_rank(60000, rows) == 0.0
+
+
+def test_percentile_above_all_peers_is_one_hundred():
+    rows = rows_with_compensation(80000, 95000, 120000)
+
+    assert percentile_rank(150000, rows) == 100.0
+
+
+def test_percentile_is_the_share_of_peers_paid_less():
+    rows = rows_with_compensation(60000, 80000, 95000, 120000)
+
+    assert percentile_rank(100000, rows) == 75.0
+
+
+def test_percentile_splits_ties_at_their_mean_rank():
+    rows = rows_with_compensation(80000, 95000, 95000, 120000)
+
+    # 1 peer below + half of the 2 tied at 95000, out of 4 peers.
+    assert percentile_rank(95000, rows) == 50.0
+
+
+def test_percentile_against_single_peer():
+    [row] = rows_with_compensation(95000)
+
+    assert percentile_rank(95000, [row]) == 50.0  # tied with the only peer
+    assert percentile_rank(60000, [row]) == 0.0
+    assert percentile_rank(150000, [row]) == 100.0
+
+
+def test_percentile_ignores_peers_without_a_compensation_figure():
+    failed_parse = Peer(org(ein="111000009"),
+                        filing(ein="111000009", parse_status="failed"), [])
+    rows = rows_with_compensation(80000, 120000)
+    rows += build_rows([failed_parse], current_year=2026)
+
+    assert percentile_rank(100000, rows) == 50.0  # the None row never counts
+    assert percentile_rank(100000, build_rows([failed_parse], 2026)) is None
+
+
+def test_ordinal_suffixes_for_percentile_callout():
+    assert [ordinal(n) for n in (0, 1, 2, 3, 4)] == ["0th", "1st", "2nd", "3rd", "4th"]
+    assert [ordinal(n) for n in (11, 12, 13)] == ["11th", "12th", "13th"]
+    assert [ordinal(n) for n in (21, 52, 73, 100)] == ["21st", "52nd", "73rd", "100th"]
 
 
 def test_missing_compensation_stays_in_table_but_out_of_stats():

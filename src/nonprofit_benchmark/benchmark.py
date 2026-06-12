@@ -82,6 +82,28 @@ def summarize(rows: list[BenchmarkRow]) -> SummaryStats:
     )
 
 
+def percentile_rank(compensation: int | float, rows: list[BenchmarkRow]) -> float | None:
+    """Where a compensation figure sits against the rows' benchmark figures."""
+    comps = [
+        row.executive_compensation
+        for row in rows
+        if row.executive_compensation is not None
+    ]
+    if not comps:
+        return None
+    below = sum(1 for comp in comps if comp < compensation)
+    tied = sum(1 for comp in comps if comp == compensation)
+    return 100 * (below + tied / 2) / len(comps)
+
+
+def ordinal(n: int) -> str:
+    """1 -> '1st', 2 -> '2nd', 11 -> '11th' — for the percentile callout."""
+    if n % 100 in (11, 12, 13):
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def _percent_of_revenue(compensation: int | None, revenue: int | None) -> float | None:
     if compensation is None or not revenue:
         return None

@@ -14,8 +14,19 @@ from pathlib import Path
 
 import streamlit as st
 
-from nonprofit_benchmark.benchmark import build_rows, summarize
-from nonprofit_benchmark.db import get_engine, query_peers
+from nonprofit_benchmark.benchmark import (
+    Peer,
+    build_rows,
+    ordinal,
+    percentile_rank,
+    summarize,
+)
+from nonprofit_benchmark.db import (
+    find_org_by_ein,
+    get_engine,
+    query_peers,
+    search_organizations,
+)
 
 STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
@@ -69,8 +80,52 @@ if not Path(db_path).exists():
     st.warning(f"Database file not found: {db_path}. Run the pipeline CLI first.")
     st.stop()
 
+engine = get_engine(db_path)
+
+# Your organization: EIN auto-fill -> name-search fallback -> manual entry.
+# Every value resolved here comes from db lookups and the Benchmark Engine;
+# nothing is computed in this file.
+with st.sidebar:
+    st.header("Your organization")
+    your_name = your_revenue = your_comp = None
+    your_ein = st.text_input("EIN", help="Auto-fills your profile from the database.")
+    your_ein = your_ein.replace("-", "").strip()
+    lookup = find_org_by_ein(engine, your_ein) if your_ein else None
+    if your_ein and lookup is None:
+        st.caption("EIN not found — search by name or enter details below.")
+        name_query = st.text_input("Search by name").strip()
+        if name_query:
+            candidates = search_organizations(engine, name_query, state=state)
+            if candidates:
+                chosen = st.selectbox(
+                    "Matches", candidates, index=None,
+                    format_func=lambda c: f"{c.name} ({c.ein})",
+                )
+                if chosen is not None:
+                    lookup = find_org_by_ein(engine, chosen.ein)
+            else:
+                st.caption("No matches — enter details below.")
+    if lookup is not None:
+        your_name = lookup.organization.name
+        if lookup.filing is not None:
+            [your_row] = build_rows(
+                [Peer(lookup.organization, lookup.filing, lookup.executives)],
+                current_year=date.today().year,
+            )
+            your_revenue = your_row.total_revenue
+            your_comp = your_row.executive_compensation
+    your_name = st.text_input("Name", value=your_name or "").strip() or None
+    your_revenue = st.number_input(
+        "Total revenue ($)", min_value=0, step=10_000, value=your_revenue or 0,
+        help="0 means unknown; you can fill this in later.",
+    ) or None
+    your_comp = st.number_input(
+        "Executive compensation ($)", min_value=0, step=5_000, value=your_comp or 0,
+        help="0 means unknown; the percentile callout appears once this is set.",
+    ) or None
+
 peers = query_peers(
-    get_engine(db_path),
+    engine,
     state=state,
     revenue_min=revenue_min or None,
     revenue_max=revenue_max or None,
@@ -87,6 +142,15 @@ metrics[2].metric("25th percentile", money(stats.p25))
 metrics[3].metric("75th percentile", money(stats.p75))
 metrics[4].metric("Minimum", money(stats.minimum))
 metrics[5].metric("Maximum", money(stats.maximum))
+
+if your_comp is not None:
+    your_percentile = percentile_rank(your_comp, rows)
+    if your_percentile is not None:
+        st.info(
+            f"**{your_name or 'Your organization'}** is at the "
+            f"**{ordinal(round(your_percentile))} percentile** of this peer set "
+            f"({money(your_comp)} vs. peer median {money(stats.median)})."
+        )
 
 st.subheader("Peer organizations")
 if not rows:
