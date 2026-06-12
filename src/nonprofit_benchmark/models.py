@@ -42,3 +42,22 @@ class Filing(Base):
     total_revenue: Mapped[int | None] = mapped_column(BigInteger)
     officer_compensation: Mapped[int | None] = mapped_column(BigInteger)
     parse_status: Mapped[str] = mapped_column(String, index=True)
+
+
+class Executive(Base):
+    """One compensated individual from Form 990 Part VII Section A.
+
+    Compensation columns stay separate and are never summed across
+    people: org = column D (the benchmark figure), related = column E,
+    other = column F.
+    """
+
+    __tablename__ = "executives"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    filing_id: Mapped[int] = mapped_column(ForeignKey("filings.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    title: Mapped[str | None] = mapped_column(String)
+    compensation_org: Mapped[int | None] = mapped_column(BigInteger)
+    compensation_related: Mapped[int | None] = mapped_column(BigInteger)
+    compensation_other: Mapped[int | None] = mapped_column(BigInteger)
