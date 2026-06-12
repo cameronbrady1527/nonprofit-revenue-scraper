@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Executive compensation benchmarking platform for nonprofits (990 data pipeline + dashboard)"
 requires-python = ">=3.12"
 dependencies = [
+    "requests>=2.32",
     "sqlalchemy>=2.0",
 ]
 
