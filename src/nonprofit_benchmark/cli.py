@@ -3,7 +3,15 @@
 import argparse
 
 from nonprofit_benchmark.bmf import download_bmf, parse_bmf
-from nonprofit_benchmark.db import get_engine, init_db, upsert_organizations
+from nonprofit_benchmark.db import (
+    get_engine,
+    init_db,
+    list_organizations,
+    record_selected_filing,
+    upsert_organizations,
+)
+from nonprofit_benchmark.filing_selector import select_filing
+from nonprofit_benchmark.propublica import ProPublicaClient, ProPublicaError
 
 DEFAULT_DB = "benchmark.db"
 
@@ -27,7 +35,51 @@ def build_parser() -> argparse.ArgumentParser:
         "--file", help="Local BMF CSV to ingest instead of downloading from the IRS"
     )
 
+    fetch_cmd = subcommands.add_parser(
+        "fetch", help="Fetch filings from ProPublica for every seeded org in a state"
+    )
+    fetch_cmd.add_argument("--state", required=True, help="Two-letter state code")
+    fetch_cmd.add_argument("--db", default=DEFAULT_DB, help="Path to the SQLite database file")
+    fetch_cmd.add_argument("--limit", type=int, help="Only fetch the first N organizations")
+
     return parser
+
+
+def run_fetch(args: argparse.Namespace) -> int:
+    engine = get_engine(args.db)
+    orgs = list_organizations(engine, state=args.state)
+    if args.limit:
+        orgs = orgs[: args.limit]
+    client = ProPublicaClient()
+
+    recorded = unknown = empty = errors = 0
+    for i, org in enumerate(orgs, start=1):
+        try:
+            payload = client.get_organization(org.ein)
+        except ProPublicaError as exc:
+            print(f"  ! {org.ein}: {exc}")
+            errors += 1
+            continue
+        if payload is None:
+            unknown += 1
+            continue
+        selected = select_filing(
+            payload.get("filings_with_data") or [], payload.get("filings_without_data") or []
+        )
+        if selected is None:
+            empty += 1
+            continue
+        record_selected_filing(engine, org.ein, selected)
+        recorded += 1
+        if i % 100 == 0:
+            print(f"  ...{i}/{len(orgs)} organizations")
+
+    print(
+        f"Fetched {len(orgs)} organizations for {args.state.upper()}: "
+        f"{recorded} filings recorded, {unknown} unknown EINs, "
+        f"{empty} without filings, {errors} errors"
+    )
+    return 0
 
 
 def run_seed(args: argparse.Namespace) -> int:
@@ -53,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Initialized database at {args.db}")
     elif args.command == "seed":
         return run_seed(args)
+    elif args.command == "fetch":
+        return run_fetch(args)
 
     return 0
 
