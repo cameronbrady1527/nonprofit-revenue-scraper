@@ -18,6 +18,9 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+dashboard = [
+    "streamlit>=1.30",
+]
 
 [project.scripts]
 pipeline = "nonprofit_benchmark.cli:entrypoint"
