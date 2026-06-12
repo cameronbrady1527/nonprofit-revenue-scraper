@@ -56,24 +56,38 @@ class StubParser:
 
 
 @pytest.fixture
-def run_parse(tmp_path, monkeypatch):
+def pipeline(tmp_path, monkeypatch):
+    """Seeded pipeline whose `parse` command can be run repeatedly with stubs."""
+
+    class Pipeline:
+        db_path = tmp_path / "benchmark.db"
+
+        def seed(self, filings_by_ein, orgs=None):
+            cli.main(["init", "--db", str(self.db_path)])
+            engine = get_engine(self.db_path)
+            upsert_organizations(engine, orgs or [org(ein) for ein in filings_by_ein])
+            for ein, selected in filings_by_ein.items():
+                record_selected_filing(engine, ein, selected)
+
+        def parse(self, results, *extra_args):
+            stub = StubParser(results)
+            monkeypatch.setattr(cli, "GeminiParser", lambda: stub)
+            monkeypatch.setattr(cli, "download_pdf", lambda url: f"bytes:{url}")
+            stub.parse = lambda pdf_bytes: stub.parse_url(str(pdf_bytes).removeprefix("bytes:"))
+            code = cli.main(["parse", "--state", "NY", "--db", str(self.db_path), *extra_args])
+            return stub, code
+
+    return Pipeline()
+
+
+@pytest.fixture
+def run_parse(pipeline):
     """Runner: run_parse(filings_by_ein, results) -> (db_path, stub, exit_code)."""
-    db_path = tmp_path / "benchmark.db"
 
     def run(filings_by_ein, results):
-        cli.main(["init", "--db", str(db_path)])
-        engine = get_engine(db_path)
-        upsert_organizations(engine, [org(ein) for ein in filings_by_ein])
-        for ein, selected in filings_by_ein.items():
-            record_selected_filing(engine, ein, selected)
-
-        stub = StubParser(results)
-        monkeypatch.setattr(cli, "GeminiParser", lambda: stub)
-        monkeypatch.setattr(cli, "download_pdf", lambda url: f"bytes:{url}")
-        stub.parse = lambda pdf_bytes: stub.parse_url(str(pdf_bytes).removeprefix("bytes:"))
-
-        code = cli.main(["parse", "--state", "NY", "--db", str(db_path)])
-        return db_path, stub, code
+        pipeline.seed(filings_by_ein)
+        stub, code = pipeline.parse(results)
+        return pipeline.db_path, stub, code
 
     return run
 
@@ -118,6 +132,67 @@ def test_failed_parse_marks_filing_failed_and_run_continues(run_parse):
     assert failed.parse_status == "failed"
     assert list_executives(engine, failed.id) == []
     assert by_ein["111000002"].parse_status == "parsed"
+
+
+def test_rerun_after_interrupt_repeats_no_completed_or_hopeless_work(pipeline):
+    pipeline.seed(
+        {
+            "111000001": pdf_filing(url="https://pdf/1"),
+            "111000002": pdf_filing(url="https://pdf/bad"),
+        }
+    )
+    _, code = pipeline.parse(
+        {"https://pdf/1": EXTRACTION, "https://pdf/bad": GeminiParseError("refusal")}
+    )
+    assert code == 0
+
+    rerun_stub, code = pipeline.parse({})
+    assert code == 0
+    assert rerun_stub.parsed_urls == []  # parsed and failed filings stay untouched
+
+
+def test_retry_failed_flag_reattempts_only_failures(pipeline):
+    pipeline.seed(
+        {
+            "111000001": pdf_filing(url="https://pdf/1"),
+            "111000002": pdf_filing(url="https://pdf/bad"),
+        }
+    )
+    pipeline.parse(
+        {"https://pdf/1": EXTRACTION, "https://pdf/bad": GeminiParseError("refusal")}
+    )
+
+    retry_stub, code = pipeline.parse({"https://pdf/bad": EXTRACTION}, "--retry-failed")
+    assert code == 0
+    assert retry_stub.parsed_urls == ["https://pdf/bad"]
+
+    engine = get_engine(pipeline.db_path)
+    by_ein = {f.ein: f for f in list_filings(engine)}
+    assert by_ein["111000002"].parse_status == "parsed"
+
+
+def test_revenue_band_flags_limit_parsing_to_orgs_near_the_band(pipeline):
+    def org_with_revenue(ein, revenue):
+        return BmfOrg(ein=ein, name=f"ORG {ein}", city="ALBANY", state="NY",
+                      ntee_code="A65", income_code=4, revenue_amount=revenue)
+
+    pipeline.seed(
+        {
+            "111000001": pdf_filing(url="https://pdf/in-band"),
+            "111000002": pdf_filing(url="https://pdf/far-out"),
+        },
+        orgs=[
+            org_with_revenue("111000001", 500_000),
+            org_with_revenue("111000002", 50_000_000),
+        ],
+    )
+
+    stub, code = pipeline.parse(
+        {"https://pdf/in-band": EXTRACTION},
+        "--revenue-min", "250000", "--revenue-max", "1000000",
+    )
+    assert code == 0
+    assert stub.parsed_urls == ["https://pdf/in-band"]
 
 
 def test_only_unparsed_filings_are_attempted(run_parse):

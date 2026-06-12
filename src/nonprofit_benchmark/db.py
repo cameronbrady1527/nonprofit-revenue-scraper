@@ -96,14 +96,8 @@ def record_selected_filing(engine: Engine, ein: str, selected: SelectedFiling) -
         session.commit()
 
 
-def list_filings(engine: Engine) -> list[Filing]:
-    with Session(engine) as session:
-        return list(session.scalars(select(Filing)))
-
-
-def filings_to_parse(engine: Engine, state: str | None = None) -> list[Filing]:
-    """Filings whose data must come from a PDF that hasn't been parsed yet."""
-    query = select(Filing).where(Filing.parse_status == PARSE_STATUS_UNPARSED)
+def list_filings(engine: Engine, state: str | None = None) -> list[Filing]:
+    query = select(Filing)
     if state:
         query = query.join(Organization, Organization.ein == Filing.ein).where(
             Organization.state == state.upper()
