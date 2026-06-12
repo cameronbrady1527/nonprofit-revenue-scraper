@@ -15,7 +15,8 @@ from pathlib import Path
 import streamlit as st
 
 from nonprofit_benchmark.benchmark import build_rows, summarize
-from nonprofit_benchmark.db import get_engine, query_peers
+from nonprofit_benchmark.db import get_engine, query_peers_for_filters
+from nonprofit_benchmark.expansion import MIN_PEER_COUNT, Filters, propose_next_step
 
 STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
@@ -69,15 +70,48 @@ if not Path(db_path).exists():
     st.warning(f"Database file not found: {db_path}. Run the pipeline CLI first.")
     st.stop()
 
-peers = query_peers(
-    get_engine(db_path),
-    state=state,
+engine = get_engine(db_path)
+base_filters = Filters(
+    states=(state,) if state else (),
     revenue_min=revenue_min or None,
     revenue_max=revenue_max or None,
-    ntee_prefix=ntee_prefix,
+    ntee=ntee_prefix,
 )
+if st.session_state.get("expansion_base") != base_filters:
+    # Sidebar filters changed: any previously confirmed expansion steps reset.
+    st.session_state["expansion_base"] = base_filters
+    st.session_state["expansion_applied"] = ()
+    st.session_state["expansion_filters"] = base_filters
+filters = st.session_state["expansion_filters"]
+peers = query_peers_for_filters(engine, filters)
 rows = build_rows(peers, current_year=date.today().year)
 stats = summarize(rows)
+
+
+def offer_expansion_step():
+    """Warn on a too-small peer set and offer the next widening step.
+
+    Rendered after the results so the user sees what was found first. The
+    advisor (pure, in nonprofit_benchmark.expansion) only proposes; nothing
+    changes until the user confirms a step by clicking its button.
+    """
+    if len(peers) >= MIN_PEER_COUNT:
+        return
+    st.warning(f"Only {len(peers)} peers found (fewer than {MIN_PEER_COUNT}).")
+    step = propose_next_step(
+        filters,
+        count_peers=lambda f: len(query_peers_for_filters(engine, f)),
+        applied=st.session_state["expansion_applied"],
+    )
+    if step is None:
+        return
+    if st.button(f"{step.label}: +{step.delta} orgs"):
+        st.session_state["expansion_applied"] = (
+            *st.session_state["expansion_applied"],
+            step.kind,
+        )
+        st.session_state["expansion_filters"] = step.filters
+        st.rerun()
 
 st.subheader("Summary")
 metrics = st.columns(6)
@@ -91,6 +125,7 @@ metrics[5].metric("Maximum", money(stats.maximum))
 st.subheader("Peer organizations")
 if not rows:
     st.info("No organizations match the current filters.")
+    offer_expansion_step()
     st.stop()
 
 st.dataframe(
@@ -147,3 +182,5 @@ for row in rows:
                 for executive in row.executives
             ]
         )
+
+offer_expansion_step()

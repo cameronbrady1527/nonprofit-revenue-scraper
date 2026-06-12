@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from nonprofit_benchmark.benchmark import Peer
 from nonprofit_benchmark.bmf import BmfOrg
+from nonprofit_benchmark.expansion import Filters
 from nonprofit_benchmark.filing_selector import SOURCE_API, SelectedFiling
 from nonprofit_benchmark.gemini_parser import FilingExtraction
 from nonprofit_benchmark.models import Base, Executive, Filing, Organization
@@ -173,6 +174,31 @@ def query_peers(
                 session.scalars(select(Executive).where(Executive.filing_id == filing.id))
             )
             peers.append(Peer(organization=organization, filing=filing, executives=executives))
+    return peers
+
+
+def query_peers_for_filters(engine: Engine, filters: Filters) -> list[Peer]:
+    """`query_peers` over an Expansion Advisor filter set, which may span
+    several states. The count source for the advisor is `len(...)` of this.
+    """
+    if not filters.states:
+        return query_peers(
+            engine,
+            revenue_min=filters.revenue_min,
+            revenue_max=filters.revenue_max,
+            ntee_prefix=filters.ntee,
+        )
+    peers: list[Peer] = []
+    for state in filters.states:
+        peers.extend(
+            query_peers(
+                engine,
+                state=state,
+                revenue_min=filters.revenue_min,
+                revenue_max=filters.revenue_max,
+                ntee_prefix=filters.ntee,
+            )
+        )
     return peers
 
 
