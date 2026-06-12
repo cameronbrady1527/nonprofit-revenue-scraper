@@ -1,4 +1,5 @@
 # Virtual environments
+.venv/
 venv/
 env/
 nonprofit_scraper_env/
@@ -16,7 +17,14 @@ pip-delete-this-directory.txt
 # Project-specific files you might want to ignore
 *.xlsx
 *.csv
+!tests/fixtures/**/*.csv
+*.db
 logs/
+
+# Packaging
+*.egg-info/
+build/
+dist/
 
 # Models in progress
 models/
