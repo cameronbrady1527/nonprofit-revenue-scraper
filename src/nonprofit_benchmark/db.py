@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
 
+from nonprofit_benchmark.benchmark import Peer
 from nonprofit_benchmark.bmf import BmfOrg
 from nonprofit_benchmark.filing_selector import SOURCE_API, SelectedFiling
 from nonprofit_benchmark.gemini_parser import FilingExtraction
@@ -139,6 +140,46 @@ def record_parse_failure(engine: Engine, filing_id: int) -> None:
     with Session(engine) as session:
         session.get(Filing, filing_id).parse_status = PARSE_STATUS_FAILED
         session.commit()
+
+
+def query_peers(
+    engine: Engine,
+    state: str | None = None,
+    revenue_min: int | None = None,
+    revenue_max: int | None = None,
+    ntee_prefix: str | None = None,
+) -> list[Peer]:
+    """Peer data for the Benchmark Engine: each matching organization with its
+    newest filing and that filing's executives.
+
+    The revenue band tests the newest filing's total_revenue, falling back to
+    the organization's BMF revenue_amount when the filing has no figure.
+    """
+    query = select(Organization, Filing).join(Filing, Filing.ein == Organization.ein)
+    if state:
+        query = query.where(Organization.state == state.upper())
+    if ntee_prefix:
+        query = query.where(Organization.ntee_code.startswith(ntee_prefix.upper()))
+    with Session(engine) as session:
+        newest: dict[str, tuple[Organization, Filing]] = {}
+        for organization, filing in session.execute(query):
+            kept = newest.get(organization.ein)
+            if kept is None or filing.tax_year > kept[1].tax_year:
+                newest[organization.ein] = (organization, filing)
+        peers = []
+        for organization, filing in newest.values():
+            revenue = filing.total_revenue
+            if revenue is None:
+                revenue = organization.revenue_amount
+            if revenue_min is not None and (revenue is None or revenue < revenue_min):
+                continue
+            if revenue_max is not None and (revenue is None or revenue > revenue_max):
+                continue
+            executives = list(
+                session.scalars(select(Executive).where(Executive.filing_id == filing.id))
+            )
+            peers.append(Peer(organization=organization, filing=filing, executives=executives))
+    return peers
 
 
 def list_executives(engine: Engine, filing_id: int | None = None) -> list[Executive]:
