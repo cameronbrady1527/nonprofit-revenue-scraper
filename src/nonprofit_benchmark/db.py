@@ -6,6 +6,7 @@ unchanged to PostgreSQL/Supabase.
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session

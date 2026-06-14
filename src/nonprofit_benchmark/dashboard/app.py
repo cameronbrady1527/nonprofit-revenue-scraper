@@ -122,6 +122,15 @@ metrics[3].metric("75th percentile", money(stats.p75))
 metrics[4].metric("Minimum", money(stats.minimum))
 metrics[5].metric("Maximum", money(stats.maximum))
 
+if your_comp is not None:
+    your_percentile = percentile_rank(your_comp, rows)
+    if your_percentile is not None:
+        st.info(
+            f"**{your_name or 'Your organization'}** is at the "
+            f"**{ordinal(round(your_percentile))} percentile** of this peer set "
+            f"({money(your_comp)} vs. peer median {money(stats.median)})."
+        )
+
 st.subheader("Peer organizations")
 if not rows:
     st.info("No organizations match the current filters.")
