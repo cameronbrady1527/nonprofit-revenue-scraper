@@ -9,6 +9,7 @@ description = "Executive compensation benchmarking platform for nonprofits (990 
 requires-python = ">=3.12"
 dependencies = [
     "google-generativeai>=0.8",
+    "openpyxl>=3.1",
     "pydantic>=2",
     "requests>=2.32",
     "sqlalchemy>=2.0",
