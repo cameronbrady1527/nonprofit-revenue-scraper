@@ -71,6 +71,49 @@ if not Path(db_path).exists():
     st.stop()
 
 engine = get_engine(db_path)
+
+# Your organization: EIN auto-fill -> name-search fallback -> manual entry.
+# Every value resolved here comes from db lookups and the Benchmark Engine;
+# nothing is computed in this file.
+with st.sidebar:
+    st.header("Your organization")
+    your_name = your_revenue = your_comp = None
+    your_ein = st.text_input("EIN", help="Auto-fills your profile from the database.")
+    your_ein = your_ein.replace("-", "").strip()
+    lookup = find_org_by_ein(engine, your_ein) if your_ein else None
+    if your_ein and lookup is None:
+        st.caption("EIN not found — search by name or enter details below.")
+        name_query = st.text_input("Search by name").strip()
+        if name_query:
+            candidates = search_organizations(engine, name_query, state=state)
+            if candidates:
+                chosen = st.selectbox(
+                    "Matches", candidates, index=None,
+                    format_func=lambda c: f"{c.name} ({c.ein})",
+                )
+                if chosen is not None:
+                    lookup = find_org_by_ein(engine, chosen.ein)
+            else:
+                st.caption("No matches — enter details below.")
+    if lookup is not None:
+        your_name = lookup.organization.name
+        if lookup.filing is not None:
+            [your_row] = build_rows(
+                [Peer(lookup.organization, lookup.filing, lookup.executives)],
+                current_year=date.today().year,
+            )
+            your_revenue = your_row.total_revenue
+            your_comp = your_row.executive_compensation
+    your_name = st.text_input("Name", value=your_name or "").strip() or None
+    your_revenue = st.number_input(
+        "Total revenue ($)", min_value=0, step=10_000, value=your_revenue or 0,
+        help="0 means unknown; you can fill this in later.",
+    ) or None
+    your_comp = st.number_input(
+        "Executive compensation ($)", min_value=0, step=5_000, value=your_comp or 0,
+        help="0 means unknown; the percentile callout appears once this is set.",
+    ) or None
+
 base_filters = Filters(
     states=(state,) if state else (),
     revenue_min=revenue_min or None,
