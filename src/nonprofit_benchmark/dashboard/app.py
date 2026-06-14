@@ -14,19 +14,9 @@ from pathlib import Path
 
 import streamlit as st
 
-from nonprofit_benchmark.benchmark import (
-    Peer,
-    build_rows,
-    ordinal,
-    percentile_rank,
-    summarize,
-)
-from nonprofit_benchmark.db import (
-    find_org_by_ein,
-    get_engine,
-    query_peers,
-    search_organizations,
-)
+from nonprofit_benchmark.benchmark import build_rows, summarize
+from nonprofit_benchmark.db import get_engine, query_peers
+from nonprofit_benchmark.excel_export import export_workbook
 
 STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
@@ -81,58 +71,47 @@ if not Path(db_path).exists():
     st.stop()
 
 engine = get_engine(db_path)
-
-# Your organization: EIN auto-fill -> name-search fallback -> manual entry.
-# Every value resolved here comes from db lookups and the Benchmark Engine;
-# nothing is computed in this file.
-with st.sidebar:
-    st.header("Your organization")
-    your_name = your_revenue = your_comp = None
-    your_ein = st.text_input("EIN", help="Auto-fills your profile from the database.")
-    your_ein = your_ein.replace("-", "").strip()
-    lookup = find_org_by_ein(engine, your_ein) if your_ein else None
-    if your_ein and lookup is None:
-        st.caption("EIN not found — search by name or enter details below.")
-        name_query = st.text_input("Search by name").strip()
-        if name_query:
-            candidates = search_organizations(engine, name_query, state=state)
-            if candidates:
-                chosen = st.selectbox(
-                    "Matches", candidates, index=None,
-                    format_func=lambda c: f"{c.name} ({c.ein})",
-                )
-                if chosen is not None:
-                    lookup = find_org_by_ein(engine, chosen.ein)
-            else:
-                st.caption("No matches — enter details below.")
-    if lookup is not None:
-        your_name = lookup.organization.name
-        if lookup.filing is not None:
-            [your_row] = build_rows(
-                [Peer(lookup.organization, lookup.filing, lookup.executives)],
-                current_year=date.today().year,
-            )
-            your_revenue = your_row.total_revenue
-            your_comp = your_row.executive_compensation
-    your_name = st.text_input("Name", value=your_name or "").strip() or None
-    your_revenue = st.number_input(
-        "Total revenue ($)", min_value=0, step=10_000, value=your_revenue or 0,
-        help="0 means unknown; you can fill this in later.",
-    ) or None
-    your_comp = st.number_input(
-        "Executive compensation ($)", min_value=0, step=5_000, value=your_comp or 0,
-        help="0 means unknown; the percentile callout appears once this is set.",
-    ) or None
-
-peers = query_peers(
-    engine,
-    state=state,
+base_filters = Filters(
+    states=(state,) if state else (),
     revenue_min=revenue_min or None,
     revenue_max=revenue_max or None,
-    ntee_prefix=ntee_prefix,
+    ntee=ntee_prefix,
 )
+if st.session_state.get("expansion_base") != base_filters:
+    # Sidebar filters changed: any previously confirmed expansion steps reset.
+    st.session_state["expansion_base"] = base_filters
+    st.session_state["expansion_applied"] = ()
+    st.session_state["expansion_filters"] = base_filters
+filters = st.session_state["expansion_filters"]
+peers = query_peers_for_filters(engine, filters)
 rows = build_rows(peers, current_year=date.today().year)
 stats = summarize(rows)
+
+
+def offer_expansion_step():
+    """Warn on a too-small peer set and offer the next widening step.
+
+    Rendered after the results so the user sees what was found first. The
+    advisor (pure, in nonprofit_benchmark.expansion) only proposes; nothing
+    changes until the user confirms a step by clicking its button.
+    """
+    if len(peers) >= MIN_PEER_COUNT:
+        return
+    st.warning(f"Only {len(peers)} peers found (fewer than {MIN_PEER_COUNT}).")
+    step = propose_next_step(
+        filters,
+        count_peers=lambda f: len(query_peers_for_filters(engine, f)),
+        applied=st.session_state["expansion_applied"],
+    )
+    if step is None:
+        return
+    if st.button(f"{step.label}: +{step.delta} orgs"):
+        st.session_state["expansion_applied"] = (
+            *st.session_state["expansion_applied"],
+            step.kind,
+        )
+        st.session_state["expansion_filters"] = step.filters
+        st.rerun()
 
 st.subheader("Summary")
 metrics = st.columns(6)
@@ -155,6 +134,7 @@ if your_comp is not None:
 st.subheader("Peer organizations")
 if not rows:
     st.info("No organizations match the current filters.")
+    offer_expansion_step()
     st.stop()
 
 st.dataframe(
@@ -194,6 +174,25 @@ st.caption(
     '"api" rows show the filing\'s aggregate officer compensation instead.'
 )
 
+st.download_button(
+    "Export to Excel",
+    data=export_workbook(
+        rows,
+        stats,
+        filter_description=", ".join(
+            part
+            for part in [
+                f"State: {state}" if state else "All states",
+                f"Revenue: {money(revenue_min or None)} to {money(revenue_max or None)}",
+                f"NTEE: {ntee_prefix}" if ntee_prefix else None,
+            ]
+            if part
+        ),
+    ),
+    file_name=f"peer_benchmark_{date.today().isoformat()}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
 st.subheader("Full executive lists")
 for row in rows:
     if not row.executives:
@@ -211,3 +210,5 @@ for row in rows:
                 for executive in row.executives
             ]
         )
+
+offer_expansion_step()

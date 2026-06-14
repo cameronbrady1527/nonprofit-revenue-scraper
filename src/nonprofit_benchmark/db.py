@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from nonprofit_benchmark.benchmark import Peer
 from nonprofit_benchmark.bmf import BmfOrg
+from nonprofit_benchmark.expansion import Filters
 from nonprofit_benchmark.filing_selector import SOURCE_API, SelectedFiling
 from nonprofit_benchmark.gemini_parser import FilingExtraction
 from nonprofit_benchmark.models import Base, Executive, Filing, Organization
@@ -177,45 +178,29 @@ def query_peers(
     return peers
 
 
-class OrgLookup(NamedTuple):
-    """One organization with its newest stored filing (None if no filing yet)."""
-
-    organization: Organization
-    filing: Filing | None
-    executives: list[Executive]
-
-
-def find_org_by_ein(engine: Engine, ein: str) -> OrgLookup | None:
-    """The organization with this exact EIN, its newest stored filing, and
-    that filing's executives; None when the EIN is not in the database."""
-    with Session(engine) as session:
-        organization = session.get(Organization, ein)
-        if organization is None:
-            return None
-        filing = session.scalars(
-            select(Filing)
-            .where(Filing.ein == ein)
-            .order_by(Filing.tax_year.desc())
-            .limit(1)
-        ).first()
-        executives = (
-            list(session.scalars(select(Executive).where(Executive.filing_id == filing.id)))
-            if filing
-            else []
+def query_peers_for_filters(engine: Engine, filters: Filters) -> list[Peer]:
+    """`query_peers` over an Expansion Advisor filter set, which may span
+    several states. The count source for the advisor is `len(...)` of this.
+    """
+    if not filters.states:
+        return query_peers(
+            engine,
+            revenue_min=filters.revenue_min,
+            revenue_max=filters.revenue_max,
+            ntee_prefix=filters.ntee,
         )
-        return OrgLookup(organization=organization, filing=filing, executives=executives)
-
-
-def search_organizations(
-    engine: Engine, name: str, state: str | None = None
-) -> list[Organization]:
-    """Candidate organizations whose name contains the query (case-insensitive),
-    for pick-from-results when an EIN lookup misses."""
-    query = select(Organization).where(Organization.name.icontains(name))
-    if state:
-        query = query.where(Organization.state == state.upper())
-    with Session(engine) as session:
-        return list(session.scalars(query))
+    peers: list[Peer] = []
+    for state in filters.states:
+        peers.extend(
+            query_peers(
+                engine,
+                state=state,
+                revenue_min=filters.revenue_min,
+                revenue_max=filters.revenue_max,
+                ntee_prefix=filters.ntee,
+            )
+        )
+    return peers
 
 
 def list_executives(engine: Engine, filing_id: int | None = None) -> list[Executive]:
