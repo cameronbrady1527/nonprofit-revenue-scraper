@@ -4,9 +4,9 @@ import argparse
 
 from nonprofit_benchmark.bmf import download_bmf, parse_bmf
 from nonprofit_benchmark.db import (
-    filings_to_parse,
     get_engine,
     init_db,
+    list_filings,
     list_organizations,
     record_parse_failure,
     record_parse_success,
@@ -15,6 +15,7 @@ from nonprofit_benchmark.db import (
 )
 from nonprofit_benchmark.filing_selector import select_filing
 from nonprofit_benchmark.gemini_parser import GeminiParseError, GeminiParser
+from nonprofit_benchmark.parse_scheduler import schedule_filings
 from nonprofit_benchmark.pdfs import PdfDownloadError, download_pdf
 from nonprofit_benchmark.propublica import ProPublicaClient, ProPublicaError
 
@@ -53,13 +54,37 @@ def build_parser() -> argparse.ArgumentParser:
     parse_cmd.add_argument("--state", required=True, help="Two-letter state code")
     parse_cmd.add_argument("--db", default=DEFAULT_DB, help="Path to the SQLite database file")
     parse_cmd.add_argument("--limit", type=int, help="Only parse the first N filings")
+    parse_cmd.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Also re-attempt filings whose previous parse failed",
+    )
+    parse_cmd.add_argument(
+        "--revenue-min", type=int,
+        help="Only parse orgs whose known revenue is at or near this floor",
+    )
+    parse_cmd.add_argument(
+        "--revenue-max", type=int,
+        help="Only parse orgs whose known revenue is at or near this ceiling",
+    )
 
     return parser
 
 
 def run_parse(args: argparse.Namespace) -> int:
     engine = get_engine(args.db)
-    filings = filings_to_parse(engine, state=args.state)
+    revenue_band = None
+    if args.revenue_min is not None or args.revenue_max is not None:
+        revenue_band = (
+            args.revenue_min if args.revenue_min is not None else 0,
+            args.revenue_max if args.revenue_max is not None else float("inf"),
+        )
+    filings = schedule_filings(
+        list_filings(engine, state=args.state),
+        list_organizations(engine, state=args.state),
+        revenue_band=revenue_band,
+        retry_failed=args.retry_failed,
+    )
     if args.limit:
         filings = filings[: args.limit]
     parser = GeminiParser()
