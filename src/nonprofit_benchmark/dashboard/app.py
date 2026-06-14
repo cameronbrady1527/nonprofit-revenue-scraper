@@ -15,8 +15,8 @@ from pathlib import Path
 import streamlit as st
 
 from nonprofit_benchmark.benchmark import build_rows, summarize
-from nonprofit_benchmark.db import get_engine, query_peers_for_filters
-from nonprofit_benchmark.expansion import MIN_PEER_COUNT, Filters, propose_next_step
+from nonprofit_benchmark.db import get_engine, query_peers
+from nonprofit_benchmark.excel_export import export_workbook
 
 STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
@@ -163,6 +163,25 @@ st.caption(
     "Compensation is the organization's highest-paid executive "
     "(Form 990 Part VII column D) — never summed across people. "
     '"api" rows show the filing\'s aggregate officer compensation instead.'
+)
+
+st.download_button(
+    "Export to Excel",
+    data=export_workbook(
+        rows,
+        stats,
+        filter_description=", ".join(
+            part
+            for part in [
+                f"State: {state}" if state else "All states",
+                f"Revenue: {money(revenue_min or None)} to {money(revenue_max or None)}",
+                f"NTEE: {ntee_prefix}" if ntee_prefix else None,
+            ]
+            if part
+        ),
+    ),
+    file_name=f"peer_benchmark_{date.today().isoformat()}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
 st.subheader("Full executive lists")
