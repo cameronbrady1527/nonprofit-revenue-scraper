@@ -14,9 +14,21 @@ from pathlib import Path
 
 import streamlit as st
 
-from nonprofit_benchmark.benchmark import build_rows, summarize
-from nonprofit_benchmark.db import get_engine, query_peers
+from nonprofit_benchmark.benchmark import (
+    Peer,
+    build_rows,
+    ordinal,
+    percentile_rank,
+    summarize,
+)
+from nonprofit_benchmark.db import (
+    find_org_by_ein,
+    get_engine,
+    query_peers_for_filters,
+    search_organizations,
+)
 from nonprofit_benchmark.excel_export import export_workbook
+from nonprofit_benchmark.expansion import MIN_PEER_COUNT, Filters, propose_next_step
 
 STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
@@ -236,10 +248,20 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
+# Rendering one expander + table per organization does not scale: an unfiltered
+# state view has thousands of peers, and that many widgets freezes the browser.
+# Cap the detail to the highest-paid organizations and point the rest at filters.
+EXECUTIVE_DETAIL_LIMIT = 25
+detailed = [row for row in rows if row.executives]
+detailed.sort(key=lambda r: r.executive_compensation or 0, reverse=True)
+
 st.subheader("Full executive lists")
-for row in rows:
-    if not row.executives:
-        continue
+if len(detailed) > EXECUTIVE_DETAIL_LIMIT:
+    st.caption(
+        f"Showing the {EXECUTIVE_DETAIL_LIMIT} highest-paid of {len(detailed)} "
+        "organizations with executive detail. Narrow the filters to see others."
+    )
+for row in detailed[:EXECUTIVE_DETAIL_LIMIT]:
     with st.expander(f"{row.name} — {row.paid_executive_count} paid executive(s)"):
         st.table(
             [
