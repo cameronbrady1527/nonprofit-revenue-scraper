@@ -33,10 +33,15 @@ Pipeline data flow (all via the `pipeline` CLI in `cli.py`):
    **processing year**, read each bulk-ZIP central directory (HTTP range, not full
    download), and populate `efile_cache.py` (SQLite, default `irs_cache.db`) with
    `object_id -> (zip_url, member)`. Tax year N ≈ processing year N+1.
-5. `parse --state XX` — `parse_scheduler.py` chooses unparsed `pdf` filings within
-   the revenue band; for each, `efile_cache.resolve` → `efile_fetch.py` range-pulls
-   the XML → `efile_xml.py` parses 990/990-EZ/990-PF → `FilingExtraction` →
-   `db.record_parse_success`.
+5. `parse --state XX` — first `db.reconcile_with_efile` (pure decision in
+   `efile_reconcile.py`) makes each org's recorded filing the most recent across
+   ProPublica and the e-file cache: backfill missed returns, insert newer ones,
+   upgrade ProPublica's aggregate `api`/`no_pdf` filings to `efile`. Then
+   `parse_scheduler.py` chooses unparsed filings within the revenue band; for
+   each, `efile_cache.resolve` → `efile_fetch.py` range-pulls the XML →
+   `efile_xml.py` parses 990/990-EZ/990-PF → `FilingExtraction` →
+   `db.record_parse_success`. Fetch and parse run concurrently (`--workers`);
+   `fetch` auto-throttles on ProPublica 429s (`throttle.py`).
 
 Dashboard (`dashboard/app.py`, Streamlit): reads the DB only. Peer filtering,
 your-org percentile, expansion advisor, Excel export. Presentation-only — every

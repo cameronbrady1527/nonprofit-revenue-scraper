@@ -12,6 +12,14 @@ class Base(DeclarativeBase):
     """Declarative base all pipeline tables register against."""
 
 
+# Filing.parse_status values. Live here (next to the model, with no internal
+# imports) so any module can reference them without importing the db layer.
+PARSE_STATUS_UNPARSED = "unparsed"
+PARSE_STATUS_PARSED = "parsed"
+PARSE_STATUS_FAILED = "failed"
+PARSE_STATUS_NO_PDF = "no_pdf"
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 

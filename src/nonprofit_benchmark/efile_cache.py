@@ -95,6 +95,21 @@ def set_locations(conn: sqlite3.Connection, locations: dict[str, tuple[str, str]
     return located
 
 
+def newest_located_year(conn: sqlite3.Connection, ein: str) -> int | None:
+    """The most recent tax year for which this EIN has a located e-file return,
+    or None. Used to compare IRS coverage against ProPublica's recorded filing."""
+    row = conn.execute(
+        """
+        SELECT tax_year FROM efile_objects
+        WHERE ein=? AND zip_url IS NOT NULL AND member_name IS NOT NULL
+        ORDER BY tax_year DESC, processing_year DESC
+        LIMIT 1
+        """,
+        (ein.zfill(9),),
+    ).fetchone()
+    return row[0] if row else None
+
+
 def resolve(conn: sqlite3.Connection, ein: str, tax_year: int) -> ObjectLocation | None:
     """The located return for this EIN and tax year, newest filing first.
 

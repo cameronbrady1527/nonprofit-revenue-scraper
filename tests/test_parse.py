@@ -207,16 +207,21 @@ def test_revenue_band_flags_limit_parsing_to_orgs_near_the_band(pipeline):
     assert fetched == ["111000001"]
 
 
-def test_only_unparsed_filings_are_attempted(run_parse):
+def test_reconciliation_upgrades_api_and_no_pdf_filings_with_efiles(run_parse):
+    # With an e-file available (the fixture seeds the cache for every org), the
+    # aggregate "api" filing and the "no_pdf" filing are upgraded to e-file and
+    # parsed alongside the pdf one — ProPublica's coverage is no longer the cap.
     no_pdf = SelectedFiling(tax_year=2024, source="pdf", pdf_url=None,
                             total_revenue=None, officer_compensation=None)
     api_filing = SelectedFiling(tax_year=2023, source="api", pdf_url=None,
                                 total_revenue=480000, officer_compensation=120000)
 
-    _, fetched, code = run_parse(
+    db_path, fetched, code = run_parse(
         {"111000001": pdf_filing(), "111000002": no_pdf, "111000003": api_filing},
-        {"111000001": "ok"},
+        {"111000001": "ok", "111000002": "ok", "111000003": "ok"},
     )
 
     assert code == 0
-    assert fetched == ["111000001"]
+    assert sorted(fetched) == ["111000001", "111000002", "111000003"]
+    statuses = {f.ein: f.parse_status for f in list_filings(get_engine(db_path))}
+    assert statuses == {"111000001": "parsed", "111000002": "parsed", "111000003": "parsed"}

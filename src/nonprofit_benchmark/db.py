@@ -14,14 +14,30 @@ from sqlalchemy.orm import Session
 from nonprofit_benchmark.benchmark import Peer
 from nonprofit_benchmark.bmf import BmfOrg
 from nonprofit_benchmark.expansion import Filters
-from nonprofit_benchmark.filing_selector import SOURCE_API, SelectedFiling
+from nonprofit_benchmark.efile_reconcile import (
+    ACTION_INSERT,
+    ACTION_UPGRADE,
+    decide_reconciliation,
+)
+from nonprofit_benchmark.filing_selector import SOURCE_API, SOURCE_EFILE, SelectedFiling
 from nonprofit_benchmark.extraction import FilingExtraction
-from nonprofit_benchmark.models import Base, Executive, Filing, Organization
+from nonprofit_benchmark.models import (
+    PARSE_STATUS_FAILED,
+    PARSE_STATUS_NO_PDF,
+    PARSE_STATUS_PARSED,
+    PARSE_STATUS_UNPARSED,
+    Base,
+    Executive,
+    Filing,
+    Organization,
+)
 
-PARSE_STATUS_UNPARSED = "unparsed"
-PARSE_STATUS_PARSED = "parsed"
-PARSE_STATUS_FAILED = "failed"
-PARSE_STATUS_NO_PDF = "no_pdf"
+__all__ = [  # re-exported for callers that import the status constants from here
+    "PARSE_STATUS_FAILED",
+    "PARSE_STATUS_NO_PDF",
+    "PARSE_STATUS_PARSED",
+    "PARSE_STATUS_UNPARSED",
+]
 
 
 def get_engine(db_path: str | Path) -> Engine:
@@ -102,6 +118,56 @@ def record_selected_filing(engine: Engine, ein: str, selected: SelectedFiling) -
             existing.officer_compensation = selected.officer_compensation
             existing.parse_status = PARSE_STATUS_PARSED
         session.commit()
+
+
+def reconcile_with_efile(engine: Engine, newest_year, state: str) -> tuple[int, int]:
+    """Make each org's recorded filing the most recent across ProPublica and the
+    IRS e-file cache. `newest_year(ein)` returns the newest located e-file year
+    for an EIN (or None). Returns (inserted, upgraded).
+
+    INSERT adds an unparsed e-file filing for a year ProPublica did not record
+    (a return it missed, or one newer than it had). UPGRADE relabels an existing
+    ProPublica aggregate ("api") filing to e-file and re-queues it so `parse`
+    extracts the real per-person Part VII figure; the existing api revenue and
+    officer compensation are kept as a fallback should that later parse fail.
+    """
+    inserted = upgraded = 0
+    with Session(engine) as session:
+        for org in session.scalars(
+            select(Organization).where(Organization.state == state.upper())
+        ):
+            existing = session.scalars(
+                select(Filing)
+                .where(Filing.ein == org.ein)
+                .order_by(Filing.tax_year.desc())
+                .limit(1)
+            ).first()
+            irs_year = newest_year(org.ein)
+            action = decide_reconciliation(
+                existing.tax_year if existing else None,
+                existing.source if existing else None,
+                existing.parse_status if existing else None,
+                irs_year,
+            )
+            if action == ACTION_INSERT:
+                session.add(
+                    Filing(
+                        ein=org.ein,
+                        tax_year=irs_year,
+                        source=SOURCE_EFILE,
+                        pdf_url=None,
+                        total_revenue=None,
+                        officer_compensation=None,
+                        parse_status=PARSE_STATUS_UNPARSED,
+                    )
+                )
+                inserted += 1
+            elif action == ACTION_UPGRADE:
+                existing.source = SOURCE_EFILE
+                existing.parse_status = PARSE_STATUS_UNPARSED
+                upgraded += 1
+        session.commit()
+    return inserted, upgraded
 
 
 def list_filings(engine: Engine, state: str | None = None) -> list[Filing]:

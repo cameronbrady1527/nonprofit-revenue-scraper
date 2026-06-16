@@ -14,6 +14,7 @@ from nonprofit_benchmark.db import (
     is_initialized,
     list_filings,
     list_organizations,
+    reconcile_with_efile,
     record_parse_failure,
     record_parse_success,
     record_selected_filing,
@@ -150,6 +151,20 @@ def run_parse(args: argparse.Namespace) -> int:
             args.revenue_min if args.revenue_min is not None else 0,
             args.revenue_max if args.revenue_max is not None else float("inf"),
         )
+
+    cache = efile_cache.connect(args.cache)
+    # First make every org's recorded filing the most recent across ProPublica
+    # and the IRS e-file cache: backfill returns ProPublica missed, and upgrade
+    # its aggregate filings to e-file so we parse the real per-person figure.
+    inserted, upgraded = reconcile_with_efile(
+        engine, lambda ein: efile_cache.newest_located_year(cache, ein), args.state
+    )
+    if inserted or upgraded:
+        print(
+            f"Reconciled with IRS e-file: {inserted} filings backfilled "
+            f"(missing from ProPublica), {upgraded} upgraded from aggregate to full e-file."
+        )
+
     filings = schedule_filings(
         list_filings(engine, state=args.state),
         list_organizations(engine, state=args.state),
@@ -159,7 +174,6 @@ def run_parse(args: argparse.Namespace) -> int:
     if args.limit:
         filings = filings[: args.limit]
 
-    cache = efile_cache.connect(args.cache)
     # Resolve each filing to its IRS XML location first, then fetch grouped by
     # ZIP so each archive's directory is read once. Filings with no e-file XML
     # in the cache (paper-only, or a year not yet synced) are left unparsed so a

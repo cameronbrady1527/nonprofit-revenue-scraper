@@ -28,6 +28,13 @@ bulk ZIPs, so `sync-irs` indexes each return's location once and `parse` then
 HTTP-range-fetches just the XML it needs — no multi-gigabyte download, no AI, no
 rate limits.
 
+ProPublica's API also lags the IRS by about a year and omits many returns, so
+`parse` first **reconciles** every org against the e-file cache: it backfills
+returns ProPublica never surfaced, replaces ProPublica's stale "newest" filing
+when the IRS has a more recent one, and upgrades aggregate filings to the real
+per-person figure. The goal is always each org's most recent, most accurate
+return — data only slips through when there is genuinely no e-file for it.
+
 The codebase separates **pure logic** (no I/O — XML/index parsing, filing
 selection, the benchmark engine, the expansion advisor, Excel rendering) from
 **thin I/O shells** (HTTP clients, the e-file fetcher, the database, the CLI).
@@ -65,7 +72,7 @@ pipeline init                       # create the database
 pipeline seed     --state NY        # download the IRS BMF roster of 501(c)(3)s
 pipeline fetch    --state NY        # record each org's newest ProPublica filing
 pipeline sync-irs --year 2024 --year 2025   # cache IRS e-file XML locations
-pipeline parse    --state NY        # extract exec comp from e-file XML
+pipeline parse    --state NY        # reconcile with IRS e-file, then extract exec comp
 ```
 
 `sync-irs` downloads the IRS index for each **processing year** and reads the
