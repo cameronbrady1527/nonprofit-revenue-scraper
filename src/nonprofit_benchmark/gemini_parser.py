@@ -15,7 +15,17 @@ import json
 import time
 from collections.abc import Callable
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
+
+from nonprofit_benchmark.extraction import ExecutiveRecord, FilingExtraction
+
+__all__ = [
+    "ExecutiveRecord",
+    "FilingExtraction",
+    "GeminiParseError",
+    "GeminiParser",
+    "process_response",
+]
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
@@ -49,19 +59,6 @@ Rules:
 - NEVER sum compensation across individuals or columns.
 - Use null for any value you cannot find. Use [] if Part VII lists no one.
 """
-
-
-class ExecutiveRecord(BaseModel):
-    name: str
-    title: str | None = None
-    compensation_org: int | None = Field(None, description="Part VII column D")
-    compensation_related: int | None = Field(None, description="Part VII column E")
-    compensation_other: int | None = Field(None, description="Part VII column F")
-
-
-class FilingExtraction(BaseModel):
-    total_revenue: int | None = None
-    executives: list[ExecutiveRecord] = []
 
 
 class GeminiParseError(Exception):

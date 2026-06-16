@@ -1,11 +1,17 @@
 """The single `pipeline` CLI entry point."""
 
 import argparse
+import threading
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
+from nonprofit_benchmark import efile_cache, efile_sync
 from nonprofit_benchmark.bmf import download_bmf, parse_bmf
 from nonprofit_benchmark.db import (
     get_engine,
     init_db,
+    is_initialized,
     list_filings,
     list_organizations,
     record_parse_failure,
@@ -13,13 +19,39 @@ from nonprofit_benchmark.db import (
     record_selected_filing,
     upsert_organizations,
 )
+from nonprofit_benchmark.efile_fetch import EfileFetcher, EfileFetchError
+from nonprofit_benchmark.efile_xml import EfileParseError, parse_990_xml
 from nonprofit_benchmark.filing_selector import select_filing
-from nonprofit_benchmark.gemini_parser import GeminiParseError, GeminiParser
 from nonprofit_benchmark.parse_scheduler import schedule_filings
-from nonprofit_benchmark.pdfs import PdfDownloadError, download_pdf
-from nonprofit_benchmark.propublica import ProPublicaClient, ProPublicaError
+from nonprofit_benchmark.propublica import (
+    ProPublicaClient,
+    ProPublicaError,
+    ProPublicaRateLimited,
+)
+from nonprofit_benchmark.throttle import AdaptiveThrottle
 
 DEFAULT_DB = "benchmark.db"
+DEFAULT_CACHE = "irs_cache.db"
+DEFAULT_WORKERS = 8
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
+
+def _progress(done: int, total: int, started: float, **tally: int) -> None:
+    """One-line progress with rate and ETA: `...300/5000 (...) — 42/s, ETA 1m52s`."""
+    elapsed = time.monotonic() - started
+    rate = done / elapsed if elapsed > 0 else 0.0
+    eta = (total - done) / rate if rate > 0 else 0.0
+    detail = ", ".join(f"{value} {label}" for label, value in tally.items())
+    detail = f" ({detail})" if detail else ""
+    print(f"  ...{done}/{total}{detail} — {rate:.0f}/s, ETA {_format_duration(eta)}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,9 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_cmd.add_argument("--state", required=True, help="Two-letter state code")
     fetch_cmd.add_argument("--db", default=DEFAULT_DB, help="Path to the SQLite database file")
     fetch_cmd.add_argument("--limit", type=int, help="Only fetch the first N organizations")
+    fetch_cmd.add_argument(
+        "--workers", type=int, default=DEFAULT_WORKERS,
+        help="Concurrent ProPublica requests (auto-throttles on rate limits)",
+    )
 
     parse_cmd = subcommands.add_parser(
-        "parse", help="Gemini-parse unparsed PDF-only filings for a state"
+        "parse", help="Parse unparsed PDF-only filings from IRS e-file XML for a state"
     )
     parse_cmd.add_argument("--state", required=True, help="Two-letter state code")
     parse_cmd.add_argument("--db", default=DEFAULT_DB, help="Path to the SQLite database file")
@@ -67,12 +103,47 @@ def build_parser() -> argparse.ArgumentParser:
         "--revenue-max", type=int,
         help="Only parse orgs whose known revenue is at or near this ceiling",
     )
+    parse_cmd.add_argument(
+        "--cache", default=DEFAULT_CACHE,
+        help="Path to the IRS e-file cache built by `sync-irs`",
+    )
+    parse_cmd.add_argument(
+        "--workers", type=int, default=DEFAULT_WORKERS,
+        help="Concurrent e-file XML fetches",
+    )
+
+    sync_cmd = subcommands.add_parser(
+        "sync-irs",
+        help="Download IRS e-file index + ZIP directories into the local cache",
+    )
+    sync_cmd.add_argument(
+        "--year", type=int, action="append", required=True, dest="years",
+        help="IRS processing year to sync (repeatable). A tax-year-N return is "
+        "usually processed in year N+1, so sync the year(s) after the tax years you want.",
+    )
+    sync_cmd.add_argument(
+        "--cache", default=DEFAULT_CACHE, help="Path to the IRS e-file cache file"
+    )
 
     return parser
 
 
+def _open_initialized(db_path: str) -> "object | None":
+    """Open the database, or print guidance and return None if it has no schema."""
+    engine = get_engine(db_path)
+    if not is_initialized(engine):
+        print(
+            f"Database '{db_path}' is empty or uninitialized. Run "
+            f"`pipeline init --db {db_path}`, then `seed` and `fetch`, before this command."
+        )
+        return None
+    return engine
+
+
 def run_parse(args: argparse.Namespace) -> int:
-    engine = get_engine(args.db)
+    engine = _open_initialized(args.db)
+    if engine is None:
+        return 1
     revenue_band = None
     if args.revenue_min is not None or args.revenue_max is not None:
         revenue_band = (
@@ -87,74 +158,176 @@ def run_parse(args: argparse.Namespace) -> int:
     )
     if args.limit:
         filings = filings[: args.limit]
-    parser = GeminiParser()
 
-    parsed = failed = 0
-    for i, filing in enumerate(filings, start=1):
-        try:
-            extraction = parser.parse(download_pdf(filing.pdf_url))
-        except (PdfDownloadError, GeminiParseError) as exc:
-            print(f"  ! {filing.ein} ({filing.tax_year}): {exc}")
-            record_parse_failure(engine, filing.id)
-            failed += 1
-            continue
-        record_parse_success(engine, filing.id, extraction)
-        parsed += 1
-        if i % 25 == 0:
-            print(f"  ...{i}/{len(filings)} filings")
+    cache = efile_cache.connect(args.cache)
+    # Resolve each filing to its IRS XML location first, then fetch grouped by
+    # ZIP so each archive's directory is read once. Filings with no e-file XML
+    # in the cache (paper-only, or a year not yet synced) are left unparsed so a
+    # later `sync-irs` can pick them up.
+    located = []
+    unavailable = 0
+    for filing in filings:
+        location = efile_cache.resolve(cache, filing.ein, filing.tax_year)
+        if location is None:
+            unavailable += 1
+        else:
+            located.append((filing, location))
+    print(
+        f"{len(filings)} filings scheduled for {args.state.upper()}: "
+        f"{len(located)} resolved to e-file XML, {unavailable} with none in the cache."
+    )
+
+    # Group by ZIP so each archive's central directory is read once, then fetch
+    # groups concurrently. Workers only do network + (pure) XML parsing; every
+    # database write happens here on the main thread, which keeps SQLite single-
+    # writer and the results deterministic regardless of completion order.
+    by_zip: dict[str, list] = defaultdict(list)
+    for filing, location in located:
+        by_zip[location.zip_url].append((filing, location))
+
+    def parse_group(items):
+        results = []
+        with EfileFetcher() as fetcher:
+            for filing, location in items:
+                try:
+                    results.append((filing, parse_990_xml(fetcher.fetch(location)), None))
+                except (EfileFetchError, EfileParseError) as exc:
+                    results.append((filing, None, exc))
+        return results
+
+    started = time.monotonic()
+    parsed = failed = done = 0
+    workers = max(1, args.workers)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for group in pool.map(parse_group, by_zip.values()):
+            for filing, extraction, exc in group:
+                done += 1
+                if exc is not None:
+                    print(f"  ! {filing.ein} ({filing.tax_year}): {exc}")
+                    record_parse_failure(engine, filing.id)
+                    failed += 1
+                else:
+                    record_parse_success(engine, filing.id, extraction)
+                    parsed += 1
+                if done % 25 == 0:
+                    _progress(done, len(located), started, parsed=parsed, failed=failed)
 
     print(
-        f"Parsed {parsed} of {len(filings)} filings for {args.state.upper()} "
-        f"({failed} failed)"
+        f"Parsed {parsed} of {len(filings)} filings for {args.state.upper()} in "
+        f"{_format_duration(time.monotonic() - started)} "
+        f"({failed} failed, {unavailable} with no e-file XML in the cache)"
     )
+    if unavailable and parsed == 0 and failed == 0:
+        cached = cache.execute("SELECT COUNT(*) FROM efile_objects").fetchone()[0]
+        if cached == 0:
+            print("  (the IRS cache is empty — run `pipeline sync-irs --year <processing year>` first)")
+        else:
+            print(
+                "  (these filings have no electronically-filed XML — typically older or "
+                "paper-filed returns; nothing left to parse)"
+            )
+    return 0
+
+
+def run_sync_irs(args: argparse.Namespace) -> int:
+    cache = efile_cache.connect(args.cache)
+    for year in args.years:
+        print(f"Syncing IRS e-file data for processing year {year} ...")
+        result = efile_sync.sync_year_live(cache, year)
+        print(
+            f"  {year}: indexed {result.indexed} returns, "
+            f"located {result.located} across {result.zips} ZIPs"
+        )
     return 0
 
 
 def run_fetch(args: argparse.Namespace) -> int:
-    engine = get_engine(args.db)
+    engine = _open_initialized(args.db)
+    if engine is None:
+        return 1
     orgs = list_organizations(engine, state=args.state)
     if args.limit:
         orgs = orgs[: args.limit]
-    client = ProPublicaClient()
+    total = len(orgs)
+    workers = max(1, args.workers)
+    print(
+        f"Fetching {total} organizations for {args.state.upper()} from ProPublica "
+        f"({workers} workers) ..."
+    )
 
-    recorded = unknown = empty = errors = 0
-    for i, org in enumerate(orgs, start=1):
-        try:
-            payload = client.get_organization(org.ein)
-        except ProPublicaError as exc:
-            print(f"  ! {org.ein}: {exc}")
-            errors += 1
-            continue
-        if payload is None:
-            unknown += 1
-            continue
-        selected = select_filing(
-            payload.get("filings_with_data") or [], payload.get("filings_without_data") or []
-        )
-        if selected is None:
-            empty += 1
-            continue
-        record_selected_filing(engine, org.ein, selected)
-        recorded += 1
-        if i % 100 == 0:
-            print(f"  ...{i}/{len(orgs)} organizations")
+    # Each worker thread keeps its own client (own HTTP session); a shared
+    # adaptive throttle slows every worker when ProPublica rate-limits, so heavy
+    # 429s degrade to a safe trickle rather than failing. Workers do the network
+    # call and the pure filing selection; the main loop does every DB write.
+    throttle = AdaptiveThrottle()
+    local = threading.local()
+
+    def client() -> ProPublicaClient:
+        existing = getattr(local, "client", None)
+        if existing is None:
+            existing = local.client = ProPublicaClient()
+        return existing
+
+    def fetch_one(org):
+        for _ in range(3):
+            throttle.wait()
+            try:
+                payload = client().get_organization(org.ein)
+            except ProPublicaRateLimited:
+                throttle.penalize()  # back off, then retry at the slower pace
+                continue
+            except ProPublicaError as exc:
+                return org, "error", exc
+            throttle.relax()
+            if payload is None:
+                return org, "unknown", None
+            selected = select_filing(
+                payload.get("filings_with_data") or [],
+                payload.get("filings_without_data") or [],
+            )
+            return (org, "recorded", selected) if selected else (org, "empty", None)
+        return org, "rate_limited", None
+
+    started = time.monotonic()
+    recorded = unknown = empty = errors = rate_limited = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i, (org, kind, value) in enumerate(pool.map(fetch_one, orgs), start=1):
+            if kind == "recorded":
+                record_selected_filing(engine, org.ein, value)
+                recorded += 1
+            elif kind == "unknown":
+                unknown += 1
+            elif kind == "empty":
+                empty += 1
+            elif kind == "rate_limited":
+                print(f"  ! {org.ein}: rate-limited, skipped")
+                rate_limited += 1
+            else:
+                print(f"  ! {org.ein}: {value}")
+                errors += 1
+            if i % 200 == 0:
+                _progress(i, total, started, filings=recorded, no_filing=empty)
 
     print(
-        f"Fetched {len(orgs)} organizations for {args.state.upper()}: "
+        f"Fetched {total} organizations for {args.state.upper()} in "
+        f"{_format_duration(time.monotonic() - started)}: "
         f"{recorded} filings recorded, {unknown} unknown EINs, "
-        f"{empty} without filings, {errors} errors"
+        f"{empty} without filings, {errors} errors, {rate_limited} rate-limited"
     )
     return 0
 
 
 def run_seed(args: argparse.Namespace) -> int:
+    engine = _open_initialized(args.db)
+    if engine is None:
+        return 1
     if args.file:
         with open(args.file, newline="", encoding="utf-8") as f:
             result = parse_bmf(f)
     else:
         result = parse_bmf(download_bmf(args.state))
 
-    stored = upsert_organizations(get_engine(args.db), result.organizations)
+    stored = upsert_organizations(engine, result.organizations)
     print(
         f"Seeded {stored} 501(c)(3) organizations for {args.state.upper()} "
         f"({result.skipped_rows} malformed rows skipped)"
@@ -174,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_fetch(args)
     elif args.command == "parse":
         return run_parse(args)
+    elif args.command == "sync-irs":
+        return run_sync_irs(args)
 
     return 0
 

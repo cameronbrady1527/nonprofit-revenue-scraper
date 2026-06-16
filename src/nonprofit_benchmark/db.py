@@ -8,14 +8,14 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
 
-from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy import Engine, create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from nonprofit_benchmark.benchmark import Peer
 from nonprofit_benchmark.bmf import BmfOrg
 from nonprofit_benchmark.expansion import Filters
 from nonprofit_benchmark.filing_selector import SOURCE_API, SelectedFiling
-from nonprofit_benchmark.gemini_parser import FilingExtraction
+from nonprofit_benchmark.extraction import FilingExtraction
 from nonprofit_benchmark.models import Base, Executive, Filing, Organization
 
 PARSE_STATUS_UNPARSED = "unparsed"
@@ -35,6 +35,11 @@ def init_db(db_path: str | Path) -> Engine:
     with engine.begin() as conn:
         conn.execute(text("PRAGMA user_version = 1"))
     return engine
+
+
+def is_initialized(engine: Engine) -> bool:
+    """True once the schema exists (i.e. `init` has run on this database)."""
+    return inspect(engine).has_table(Organization.__tablename__)
 
 
 def upsert_organizations(engine: Engine, orgs: Iterable[BmfOrg]) -> int:
