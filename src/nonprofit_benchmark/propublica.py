@@ -14,6 +14,11 @@ class ProPublicaError(Exception):
     """The API answered in a way we can't use (after retries)."""
 
 
+class ProPublicaRateLimited(ProPublicaError):
+    """Rate-limited (429) even after the client's own backoff; a concurrent
+    caller can react by slowing its worker pool down."""
+
+
 class ProPublicaClient:
     def __init__(
         self,
@@ -45,4 +50,4 @@ class ProPublicaClient:
                 return response.json()
             except ValueError as exc:
                 raise ProPublicaError(f"Malformed payload for EIN {ein}") from exc
-        raise ProPublicaError(f"Rate-limited for EIN {ein} after {self._max_retries} retries")
+        raise ProPublicaRateLimited(f"Rate-limited for EIN {ein} after {self._max_retries} retries")
