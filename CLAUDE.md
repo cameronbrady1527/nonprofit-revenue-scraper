@@ -1,162 +1,96 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repository.
 
-## Project Overview
+## What this is
 
-This is a nonprofit data collection and analysis toolkit that scrapes financial data from ProPublica's Nonprofit Explorer API. The project focuses on identifying nonprofits with revenue between $250K-$1M and extracting executive compensation information from Form 990 tax filings.
+`nonprofit-benchmark`: a data pipeline + Streamlit dashboard for benchmarking
+nonprofit executive compensation. It builds a 501(c)(3) roster from the IRS
+Business Master File, records each org's newest Form 990 from ProPublica, fills
+in per-person Part VII compensation from the IRS e-file XML bulk dataset, and
+serves a peer-comparison dashboard.
 
-**Key Features:**
-- **Dual Architecture**: Sync and async processing options
-- **AI-Powered PDF Parsing**: Gemini 2.5 Flash with OCR fallback
-- **Real-Time GUI Monitoring**: Live statistics and error tracking
-- **Comprehensive Error Categorization**: Distinguishes rate limits from legitimate no-data cases
-- **Advanced Search Strategy**: ~138 search queries to overcome API limits
+The benchmark figure is each org's **highest-paid executive's Form 990 Part VII
+column D compensation** — never summed across people.
 
-## Core Architecture
+> Note: this project was rewritten from an earlier ProPublica scraper (async
+> scrapers, Tkinter monitor, Gemini PDF parsing). Those files are gone. Ignore any
+> stale references to `launch_with_monitor.py`, `async_nonprofit_scraper.py`, etc.
 
-### Main Entry Points
-- **`launch_with_monitor.py`** - **RECOMMENDED**: Unified launcher with real-time GUI monitoring
-- **`scraper_launcher.py`** - Interactive launcher to choose sync/async, parsing method, and state
-- **`nonprofit_data_scraper.py`** - Original sync scraper with comprehensive search strategies
-- **`async_nonprofit_scraper.py`** - High-performance async scraper (5-10x faster)
-- **`scraper_monitor.py`** - Real-time GUI monitoring dashboard
-- **`simple_990_scraper.py`** - Simplified version without PDF parsing capabilities
+## Architecture
 
-### Performance Architectures
+Strict split between **pure logic** (no I/O, no network, deterministic) and thin
+**I/O shells**. Transports are injected so the pure logic is tested offline.
 
-#### Async Scraper (Recommended for Large Datasets)
-- **Concurrency**: 10 concurrent API calls + 3 concurrent PDF processes
-- **Speed**: 5-10x faster than sync version
-- **Features**: Real-time GUI monitoring, advanced error tracking
-- **Best for**: Full state scrapes with thousands of organizations
+Pipeline data flow (all via the `pipeline` CLI in `cli.py`):
 
-#### Sync Scraper (Stable Original)
-- **Approach**: Sequential processing with rate limiting
-- **Features**: Proven reliability, comprehensive logging
-- **Best for**: Smaller datasets, debugging, conservative processing
+1. `init` — create the SQLite database (`benchmark.db`).
+2. `seed --state XX` — `bmf.py`: download + parse the IRS BMF; store 501(c)(3) orgs.
+3. `fetch --state XX` — `propublica.py` per-EIN; `filing_selector.py` picks each
+   org's newest filing and classifies it `api` (structured data present) or `pdf`
+   (numbers only in the 990 itself).
+4. `sync-irs --year YYYY` — `efile_sync.py`: download the IRS e-file index for a
+   **processing year**, read each bulk-ZIP central directory (HTTP range, not full
+   download), and populate `efile_cache.py` (SQLite, default `irs_cache.db`) with
+   `object_id -> (zip_url, member)`. Tax year N ≈ processing year N+1.
+5. `parse --state XX` — first `db.reconcile_with_efile` (pure decision in
+   `efile_reconcile.py`) makes each org's recorded filing the most recent across
+   ProPublica and the e-file cache: backfill missed returns, insert newer ones,
+   upgrade ProPublica's aggregate `api`/`no_pdf` filings to `efile`. Then
+   `parse_scheduler.py` chooses unparsed filings within the revenue band; for
+   each, `efile_cache.resolve` → `efile_fetch.py` range-pulls the XML →
+   `efile_xml.py` parses 990/990-EZ/990-PF → `FilingExtraction` →
+   `db.record_parse_success`. Fetch and parse run concurrently (`--workers`);
+   `fetch` auto-throttles on ProPublica 429s (`throttle.py`).
 
-### PDF Parsing System
-The project offers two PDF parsing approaches with intelligent fallback:
+Dashboard (`dashboard/app.py`, Streamlit): reads the DB only. Peer filtering,
+your-org percentile, expansion advisor, Excel export. Presentation-only — every
+number comes from `db.query_peers_for_filters` and the pure `benchmark.py` engine.
 
-#### Gemini AI Parsing (Recommended)
-- **Primary method**: Uses Google's Gemini 2.5 Flash model (gemini-2.5-flash-preview-05-20)
-- **API**: Requires `GOOGLE_AI_API_KEY` environment variable
-- **Features**: 
-  - File API for optimal PDF handling with fallback to direct content parsing
-  - Structured JSON output with Pydantic validation via `FinancialDataResponse` model
-  - Automatic retry logic with exponential backoff
-  - Rate limit detection and reporting
-- **Fallback**: Automatically falls back to OCR if Gemini fails
+### Key modules
 
-#### OCR Parsing (Legacy)
-- **Primary**: `pdfplumber` for text extraction
-- **Fallback**: OCR with `pytesseract` and `pdf2image` for scanned documents
-- **Data structures**: `ParsedFinancialData` dataclass with revenue, expenses, and executive compensation
-- **Form handling**: Supports both pre-2008 and post-2008 Form 990 formats via `FormVersion` enum
+- `extraction.py` — `FilingExtraction` / `ExecutiveRecord`, the shared parser
+  result type (so persistence never depends on the data source).
+- `efile_xml.py` — pure XML parser; element paths validated against real IRS
+  returns (990: `CYTotalRevenueAmt` + `Form990PartVIISectionAGrp`; 990-EZ:
+  `TotalRevenueAmt` + `OfficerDirectorTrusteeEmplGrp`; 990-PF: `TotalRevAndExpnssAmt`
+  + `OfficerDirTrstKeyEmplGrp`). Matches tags by local name (namespace-agnostic).
+- `benchmark.py` / `expansion.py` / `excel_export.py` — pure engines.
+- `db.py` / `models.py` — SQLAlchemy; schema kept portable to PostgreSQL/Supabase.
+- `gemini_parser.py` — legacy PDF path, optional `gemini` extra, **unused** by the
+  pipeline (ProPublica's PDF host is behind a Cloudflare challenge). Kept only so
+  the optional code path and its tests still import.
 
-### Advanced Search Strategy
-Comprehensive approach to overcome ProPublica API's 10,000 result limit:
-- **41 Nonprofit terms**: foundation, association, charity, hospital, etc.
-- **2 State terms**: state name and code
-- **95 Alphabetical searches**: single letters + strategic two-letter combinations
-- **Total**: ~138 unique search queries per state
-- **Deduplication**: Real-time EIN tracking to prevent processing duplicates
+## Why IRS XML, not PDFs
 
-### Error Categorization & Monitoring
-Advanced error tracking distinguishes between:
-- **API**: ProPublica provided data directly ✅
-- **AI**: Successfully extracted via Gemini/OCR ✅  
-- **Rate Limits**: Gemini API quota exceeded or 429 errors ⚠️
-- **Errors**: Download failures, parsing failures, network issues ❌
-- **N/A**: Legitimately no data available (no PDF, no filings) ℹ️
+ProPublica's API has revenue but not per-person Part VII comp, and its
+`download-filing` PDF endpoint now returns a Cloudflare challenge (HTTP 403). The
+IRS e-file XML is the public, complete, key-free source for electronically filed
+990/990-EZ/990-PF (e-filing mandatory since tax year 2020). Paper-filed scanned
+returns have no XML and are left unparsed.
 
-### Real-Time GUI Monitor
-Three-panel monitoring dashboard:
-- **Top Left**: Progress bar, current activity, timing statistics
-- **Top Right**: Data source breakdown, success rates, error categories
-- **Bottom**: Live color-coded logs with auto-scrolling
+## Commands
 
-### Core Files
-- **`gemini_pdf_parser.py`** - Gemini AI PDF parsing with Pydantic models and File API
-- **`form_990_parser.py`** - Legacy OCR parsing engine
-- **`MONITOR_README.md`** - GUI monitoring documentation
-
-## Development Commands
-
-### Environment Setup
 ```bash
-# Create and activate virtual environment
-python -m venv nonprofit_scraper_env
-nonprofit_scraper_env\Scripts\activate  # Windows
-source nonprofit_scraper_env/bin/activate  # Mac/Linux
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dashboard,dev]"          # core + dashboard + tests
 
-# Install dependencies
-pip install -r requirements.txt
+pipeline init
+pipeline seed     --state NY
+pipeline fetch    --state NY               # --limit N to scope
+pipeline sync-irs --year 2024 --year 2025
+pipeline parse    --state NY               # --limit / --retry-failed / --revenue-min/max
 
-# Set up Gemini AI API key (for AI parsing)
-# Create .env file with: GOOGLE_AI_API_KEY=your_api_key_here
+streamlit run src/nonprofit_benchmark/dashboard/app.py
+
+pytest                                     # full suite, offline
 ```
 
-### Running the Tools
+## Conventions
 
-#### Recommended: GUI Monitoring
-```bash
-# Launch with real-time GUI monitoring (BEST EXPERIENCE)
-python launch_with_monitor.py
-
-# Monitor only (if running scraper separately)
-python scraper_monitor.py
-```
-
-#### Direct Scraper Execution
-```bash
-# Interactive launcher (sync or async choice)
-python scraper_launcher.py
-
-# Original sync scraper
-python nonprofit_data_scraper.py
-
-# Async scraper directly
-python async_nonprofit_scraper.py
-
-# Simple scraper (no PDF parsing)
-python simple_990_scraper.py
-```
-
-### Testing & Validation
-No formal test framework is configured. Testing is done through:
-- Manual execution of scrapers with sample data
-- Parser validation with known Form 990 documents
-- Output verification through Excel file inspection
-- GUI monitoring for real-time error detection
-
-## Key Dependencies
-- **Core Processing**: `requests`, `aiohttp`, `asyncio`
-- **Data & Export**: `pandas`, `openpyxl`, `numpy`
-- **PDF Processing**: `pdfplumber`, `pytesseract`, `pdf2image`, `pypdfium2`
-- **AI Integration**: `google-generativeai`, `pydantic`
-- **User Interface**: `inquirer`, `tkinter` (GUI monitoring)
-- **Environment**: `python-dotenv`, `logging`
-
-## Data Flow
-1. **Launch**: User chooses scraper type (sync/async), parsing method (Gemini/OCR), and state
-2. **Search Phase**: Execute ~138 search queries across nonprofit terms, state terms, and alphabetical combinations
-3. **Collection**: Gather unique EINs with real-time deduplication
-4. **Processing**: Extract financial data using ProPublica API + PDF parsing (concurrent in async mode)
-5. **Monitoring**: Real-time GUI updates showing progress, errors, and success rates
-6. **Export**: Generate timestamped Excel files with comprehensive data and formatting
-
-## Output Format
-Excel files with columns: Organization Name, EIN, Filing Year, Total Revenue, Executive Compensation, plus computed numeric columns for analysis. Files include:
-- Auto-adjusted column widths
-- Revenue-sorted organization list
-- Summary statistics (revenue/compensation ranges)
-- Clear distinction between data sources (API vs AI vs N/A)
-
-## Performance & Rate Limiting
-- **Sync**: Built-in delays (0.3-1 second) with retry logic
-- **Async**: Semaphore-controlled concurrency (10 API + 3 PDF concurrent)
-- **Smart Rate Limiting**: Detects and reports API rate limits vs legitimate no-data cases
-- **Graceful Interruption**: Saves partial results on Ctrl+C
-- **Error Recovery**: Automatic fallback from Gemini to OCR parsing
+- Keep the pure/IO split. New network code goes in a thin shell with an injectable
+  transport; the logic it feeds is a separate pure function with its own test.
+- Every behavior change ships with a test; the suite must stay offline and fast.
+- Compensation columns (org=D, related=E, other=F) stay separate; never sum across
+  people or columns into one figure.
+- SQLite only uses constructs that port unchanged to PostgreSQL/Supabase.

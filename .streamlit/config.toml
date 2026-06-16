@@ -1,0 +1,9 @@
+# Local dashboard settings. These make `streamlit run` work out of the box on
+# WSL2, where the browser-to-server WebSocket otherwise stalls on the loading
+# screen (XSRF/CORS check fails across the Windows<->WSL boundary). This is a
+# local, single-user dashboard, so relaxing those checks is safe here; drop
+# this file if you ever serve it on a real network.
+[server]
+headless = true              # no auto-open browser, no first-run email prompt
+enableXsrfProtection = false # fixes the WSL2 "stuck on loading screen" hang
+enableCORS = false

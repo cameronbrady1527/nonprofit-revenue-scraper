@@ -8,11 +8,12 @@ version = "0.1.0"
 description = "Executive compensation benchmarking platform for nonprofits (990 data pipeline + dashboard)"
 requires-python = ">=3.12"
 dependencies = [
-    "google-generativeai>=0.8",
     "openpyxl>=3.1",
     "pydantic>=2",
+    "remotezip>=0.12",
     "requests>=2.32",
     "sqlalchemy>=2.0",
+    "zipfile-deflate64>=0.2",  # IRS 2025+ ZIPs use Deflate64, unsupported by stdlib zipfile
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,11 @@ dev = [
 ]
 dashboard = [
     "streamlit>=1.30",
+]
+# Legacy Gemini PDF parser (gemini_parser.py). The pipeline now sources data
+# from IRS e-file XML and does not need this; kept for the optional code path.
+gemini = [
+    "google-generativeai>=0.8",
 ]
 
 [project.scripts]

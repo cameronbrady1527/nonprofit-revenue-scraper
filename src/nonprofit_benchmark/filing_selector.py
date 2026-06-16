@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 SOURCE_API = "api"
 SOURCE_PDF = "pdf"
+SOURCE_EFILE = "efile"  # the filing's data comes straight from IRS e-file XML
 
 
 @dataclass(frozen=True)
